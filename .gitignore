@@ -1,0 +1,16 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 本地环境变量（含真实密码/Token，禁止提交）
+.env
+.env.*
+!.env.example

@@ -1,0 +1,2301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slurm 集群监控</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --panel-2: #1c2330;
+  --line: #2a3444;
+  --txt: #e6edf3;
+  --txt-2: #9fb0c3;
+  --txt-3: #6e7f95;
+  --acc: #3b82f6;
+  --acc-2: #60a5fa;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --crit: #f85149;
+  --idle: #58a6ff;
+  --r: 10px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--txt);
+  font-family: "WenQuanYi Micro Hei", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+a { color: var(--acc-2); text-decoration: none; cursor: pointer; }
+a:hover { text-decoration: underline; }
+
+/* ---- topbar ---- */
+.topbar {
+  height: 52px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.logo { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 15px; letter-spacing: .3px; white-space: nowrap; }
+.logo .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); flex-shrink: 0; }
+.nav { display: flex; gap: 2px; margin-left: 10px; }
+.nav button {
+  background: none; border: none; color: var(--txt-2);
+  padding: 7px 13px; border-radius: 8px; font-size: 13px;
+  cursor: pointer; font-family: inherit; transition: background .15s;
+}
+.nav button:hover { background: var(--panel-2); color: var(--txt); }
+.nav button.on { background: rgba(59,130,246,.15); color: var(--acc-2); font-weight: 600; }
+.top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.live {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--txt-2);
+  background: var(--panel-2); padding: 4px 10px;
+  border-radius: 20px; border: 1px solid var(--line);
+}
+.live i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); font-style: normal; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ---- controls ---- */
+select {
+  background: var(--panel-2); color: var(--txt);
+  border: 1px solid var(--line); border-radius: 7px;
+  padding: 5px 10px; font-size: 13px; font-family: inherit;
+  cursor: pointer; outline: none; min-width: 90px;
+}
+select:hover { border-color: #3d4a5f; }
+select:focus { border-color: var(--acc); }
+.field { display: flex; align-items: center; gap: 6px; }
+.field label { font-size: 12px; color: var(--txt-3); white-space: nowrap; }
+input[type=text] {
+  background: var(--panel-2); color: var(--txt);
+  border: 1px solid var(--line); border-radius: 7px;
+  padding: 5px 10px; font-size: 13px; font-family: inherit;
+  outline: none; min-width: 140px;
+}
+input[type=text]:focus { border-color: var(--acc); }
+
+/* ---- layout ---- */
+.wrap { padding: 16px 18px 40px; max-width: 1600px; margin: 0 auto; }
+.page { display: none; }
+.page.on { display: block; }
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.toolbar .sp { margin-left: auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; }
+.card-h { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.card-h h3 { font-size: 13px; font-weight: 600; }
+.card-h .sub { font-size: 12px; color: var(--txt-3); }
+.card-h .r { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.grid { display: grid; gap: 12px; }
+.mb { margin-bottom: 12px; }
+
+/* ---- kpis ---- */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.kpi {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 13px 14px;
+}
+.kpi .t { font-size: 11px; color: var(--txt-3); margin-bottom: 7px; }
+.kpi .v { font-size: 24px; font-weight: 700; letter-spacing: .4px; }
+.kpi .v small { font-size: 13px; font-weight: 500; color: var(--txt-2); }
+.kpi .bar { height: 4px; border-radius: 4px; background: var(--panel-2); margin-top: 10px; overflow: hidden; }
+.kpi .bar i { display: block; height: 100%; border-radius: 4px; transition: width .4s; }
+.kpi .foot { font-size: 11px; color: var(--txt-3); margin-top: 6px; }
+
+/* ---- table ---- */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 11px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 11px; color: var(--txt-3); font-weight: 600; background: var(--panel-2); }
+tbody tr:hover { background: rgba(59,130,246,.06); }
+td.num { font-variant-numeric: tabular-nums; }
+.tw { max-height: 440px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); }
+.tw table { border-collapse: collapse; }
+.tw th { position: sticky; top: 0; z-index: 2; }
+.expand { cursor: pointer; color: var(--acc-2); user-select: none; width: 20px; }
+.detail-row td { background: #12181f; padding: 0; }
+.detail-box { padding: 12px 16px; border-left: 3px solid var(--acc); }
+
+/* ---- badges ---- */
+button.pg { background: var(--panel-2); color: var(--txt-2); border: 1px solid var(--line); border-radius: 7px; padding: 4px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
+button.pg:hover:not(:disabled) { border-color: var(--acc); color: var(--txt); }
+button.pg:disabled { opacity: .4; cursor: default; }
+.tag {
+  display: inline-block; padding: 2px 8px; border-radius: 20px;
+  font-size: 11px; font-weight: 600; border: 1px solid transparent;
+}
+.t-ok { background: rgba(63,185,80,.13); color: var(--ok); border-color: rgba(63,185,80,.28); }
+.t-warn { background: rgba(210,153,34,.13); color: var(--warn); border-color: rgba(210,153,34,.28); }
+.t-crit { background: rgba(248,81,73,.13); color: var(--crit); border-color: rgba(248,81,73,.28); }
+.t-idle { background: rgba(88,166,255,.1); color: var(--idle); border-color: rgba(88,166,255,.25); }
+.t-mute { background: var(--panel-2); color: var(--txt-3); border-color: var(--line); }
+
+/* ---- node cards ---- */
+.nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+.node {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 13px 15px;
+  cursor: pointer; transition: border-color .15s, transform .15s;
+}
+.node:hover { border-color: var(--acc); transform: translateY(-2px); }
+.node .n1 { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 11px; }
+.node .nm { font-weight: 600; font-size: 14px; }
+.node .np { font-size: 11px; color: var(--txt-3); margin-top: 2px; }
+.meter { margin-bottom: 8px; }
+.meter .l { display: flex; justify-content: space-between; font-size: 11px; color: var(--txt-3); margin-bottom: 3px; }
+.meter .l b { color: var(--txt-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.mbar { height: 5px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.mbar i { display: block; height: 100%; border-radius: 3px; transition: width .4s; }
+.spark { margin-top: 10px; height: 32px; }
+
+/* ---- chart ---- */
+.chart { width: 100%; height: 260px; display: block; }
+.legend {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  font-size: 12px; color: var(--txt-2); align-items: center;
+}
+.legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.lopt {
+  display: flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 5px;
+  border: 1px solid var(--line); background: var(--panel-2);
+}
+
+/* ---- gpu grid ---- */
+.gpu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 9px; }
+.gpu { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; }
+.gpu.busy { border-color: rgba(248,81,73,.3); }
+.gpu .g1 { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--txt-3); margin-bottom: 7px; }
+.gpu .pct { font-size: 18px; font-weight: 700; }
+.gpu .gsub { font-size: 11px; color: var(--txt-3); margin-top: 4px; }
+
+/* ---- tabs ---- */
+.tabs { display: flex; gap: 3px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.tabs button {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--txt-2); padding: 8px 14px; font-size: 13px;
+  cursor: pointer; font-family: inherit; margin-bottom: -1px; transition: color .15s;
+}
+.tabs button.on { color: var(--acc-2); border-bottom-color: var(--acc); font-weight: 600; }
+
+/* ---- misc ---- */
+.hint {
+  font-size: 12px; color: var(--txt-3);
+  background: var(--panel-2); border: 1px dashed var(--line);
+  border-radius: 7px; padding: 8px 11px; margin-bottom: 12px;
+}
+.empty { padding: 24px; text-align: center; color: var(--txt-3); font-size: 13px; }
+.loading { padding: 24px; text-align: center; color: var(--txt-3); font-size: 13px; }
+.foot-note { margin-top: 16px; font-size: 11px; color: var(--txt-3); text-align: center; }
+
+/* ---- pie ---- */
+.pie-wrap { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.pie-wrap .legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.pie-wrap .legend .lopt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  min-width: 180px;
+  font-size: 13px;
+}
+.pie-wrap .legend .lopt i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+.pie-wrap .legend .lopt span {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo"><span class="dot"></span>Slurm 集群监控</div>
+  <div class="nav">
+    <button class="on" data-page="overview">总览</button>
+    <button data-page="node">GPU 详情</button>
+    <button data-page="pending">排队作业</button>
+    <button data-page="user">个人统计</button>
+    <button data-page="mapping">名字映射</button>
+    <button data-page="groups">集群配置</button>
+  </div>
+  <div class="top-right">
+    <div class="field">
+      <label>自动刷新</label>
+      <select id="gRefresh">
+        <option value="0">关闭</option>
+        <option value="15">15 秒</option>
+        <option value="30" selected>30 秒</option>
+        <option value="60">1 分钟</option>
+      </select>
+    </div>
+    <div class="live"><i></i><span id="clock">--:--:--</span></div>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- ======= 1. 总览页 ======= -->
+<div class="page on" id="page-overview">
+  <div class="toolbar">
+    <div class="field"><label>分区</label><select id="ovPart"><option value="all">全部</option></select></div>
+    <div class="field"><label>节点状态</label>
+      <select id="ovState">
+        <option value="all">全部</option>
+        <option value="idle">空闲</option>
+        <option value="mixed">混合</option>
+        <option value="allocated">占满</option>
+        <option value="down">故障</option>
+      </select>
+    </div>
+    <div class="field"><label>排序</label>
+      <select id="ovSort">
+        <option value="gpu_util">GPU 使用率</option>
+        <option value="load">负载</option>
+        <option value="name">节点名</option>
+      </select>
+    </div>
+    <div class="field"><label>视图</label>
+      <select id="ovView">
+        <option value="card">卡片</option>
+        <option value="table">表格</option>
+      </select>
+    </div>
+    <div class="sp field"><label>趋势区间</label>
+      <select id="ovRange">
+        <option value="5m" selected>5 分钟</option>
+        <option value="15m">15 分钟</option>
+        <option value="1h">1 小时</option>
+        <option value="1d">1 天</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="kpis" id="ovKpis"></div>
+
+  <div class="card mb">
+    <div class="card-h">
+      <h3>集群资源趋势</h3>
+      <span class="sub" id="ovRangeTxt"></span>
+      <div class="r">
+        <div class="field"><label>指标</label>
+          <select id="ovMetric">
+            <option value="gpu_util" selected>GPU 平均利用率</option>
+            <option value="gpu_used">GPU 使用数</option>
+            <option value="job_running">运行作业数</option>
+            <option value="job_pending">排队作业数</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <svg class="chart" id="ovChart" viewBox="0 0 1000 260" preserveAspectRatio="none"></svg>
+    <div class="legend" id="ovLegend" style="margin-top:8px"></div>
+  </div>
+
+  <!-- 用户排行榜 -->
+  <div class="card mb">
+    <div class="card-h">
+      <h3>用户排行榜</h3>
+      <span class="sub" id="topUserSub"></span>
+      <div class="r">
+        <div class="field"><label>时间范围</label>
+          <select id="topUserRange">
+            <option value="1d">1 天</option>
+            <option value="7d" selected>7 天</option>
+            <option value="30d">30 天</option>
+            <option value="all">全部</option>
+          </select>
+        </div>
+        <div class="field"><label>排序指标</label>
+          <select id="topUserMetric">
+            <option value="gpu_hours" selected>GPU 卡时 ↓</option>
+            <option value="job_count">作业数 ↓</option>
+            <option value="gpu_util">GPU 利用率 ↓ 高→低</option>
+            <option value="gpu_util_asc">GPU 利用率 ↑ 低→高</option>
+            <option value="pending_wait">排队时长 ↓ (实时)</option>
+          </select>
+        </div>
+        <div class="field"><label>显示数量</label>
+          <select id="topUserLimit">
+            <option value="10" selected>Top 10</option>
+            <option value="30">Top 30</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="tw">
+      <table>
+        <thead id="topUserThead">
+          <tr>
+            <th style="width:50px">排名</th>
+            <th>用户</th>
+            <th style="width:120px">GPU 卡时</th>
+            <th style="width:100px">作业数</th>
+            <th style="width:120px">平均利用率</th>
+            <th style="width:100px">成功率</th>
+          </tr>
+        </thead>
+        <tbody id="topUserList"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">
+      <h3>节点列表</h3>
+      <span class="sub" id="ovNodeCnt"></span>
+      <div class="r">
+        <span class="sub" id="loginNodeStatus" style="margin-right:10px"></span>
+      </div>
+    </div>
+    <div id="ovNodes" class="nodes"></div>
+    <div class="tw" id="ovTable" style="display:none"></div>
+  </div>
+</div>
+
+<!-- ======= 2. GPU 详情页 ======= -->
+<div class="page" id="page-node">
+  <div class="toolbar">
+    <div class="field"><label>节点</label><select id="ndSel"></select></div>
+    <div class="field"><label>分区</label><select id="ndPart"><option value="all">全部</option></select></div>
+    <div class="field"><label>粒度</label>
+      <select id="ndRange">
+        <option value="1m">1 分钟</option>
+        <option value="5m" selected>5 分钟</option>
+        <option value="15m">15 分钟</option>
+        <option value="1h">1 小时</option>
+      </select>
+    </div>
+    <div class="field"><label>对比日期 A</label><select id="ndCmpA"></select></div>
+    <div class="field"><label>对比日期 B</label><select id="ndCmpB"></select></div>
+    <div class="sp field"><label>GPU 卡</label><select id="ndGpu"><option value="all">全部卡</option></select></div>
+  </div>
+
+  <div class="kpis" id="ndKpis"></div>
+
+  <div class="card mb">
+    <div class="card-h">
+      <h3>历史曲线对比</h3><span class="sub">30 秒采集，按粒度聚合；可选两天叠加对比</span>
+      <div class="r">
+        <div class="field"><label>指标</label>
+          <select id="ndMetric">
+            <option value="gpu_util">GPU 利用率 %</option>
+            <option value="gpu_mem">显存使用 %</option>
+            <option value="load">节点负载 %</option>
+            <option value="mem">内存使用 %</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <svg class="chart" id="ndChart" viewBox="0 0 1000 260" preserveAspectRatio="none"></svg>
+    <div class="legend" id="ndLegend" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card mb">
+    <div class="card-h"><h3>GPU 卡实时状态</h3><span class="sub" id="ndGpuSub"></span></div>
+    <div class="gpu-grid" id="ndGpus"></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs" id="ndTabs">
+      <button class="on" data-tab="run">运行作业</button>
+      <button data-tab="pend">等待排队</button>
+    </div>
+    <div class="tw" id="ndJobs"></div>
+  </div>
+</div>
+
+<!-- ======= 3. 排队作业页 ======= -->
+<div class="page" id="page-pending">
+  <div class="toolbar">
+    <div class="field"><label>用户</label><select id="pdUser"><option value="all">全部</option></select></div>
+    <div class="field"><label>分区</label><select id="pdPart"><option value="all">全部</option></select></div>
+    <div class="field"><label>目标节点</label><select id="pdNode"><option value="all">全部</option></select></div>
+    <div class="field"><label>等待原因</label><select id="pdReason"><option value="all">全部</option></select></div>
+    <div class="field"><label>GPU 需求</label>
+      <select id="pdGpu">
+        <option value="all">不限</option>
+        <option value="1">= 1 卡</option>
+        <option value="2">= 2 卡</option>
+        <option value="4">= 4 卡</option>
+        <option value="8+">≥ 8 卡</option>
+      </select>
+    </div>
+    <div class="sp field"><label>排序</label>
+      <select id="pdSort">
+        <option value="wait_desc">等待时长</option>
+        <option value="priority">优先级</option>
+        <option value="submit_time">提交时间</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="kpis" id="pdKpis"></div>
+
+  <div class="grid mb" style="grid-template-columns:1.6fr 1fr">
+    <div class="card">
+      <div class="card-h"><h3>等待时长趋势</h3>
+        <div class="r"><div class="field"><label>粒度</label>
+          <select id="pdRange">
+            <option value="15m" selected>15 分钟</option>
+            <option value="1h">1 小时</option>
+            <option value="1d">1 天</option>
+          </select>
+        </div></div>
+      </div>
+      <svg class="chart" id="pdChart" viewBox="0 0 1000 230" preserveAspectRatio="none" style="height:210px"></svg>
+    </div>
+    <div class="card">
+      <div class="card-h"><h3>等待原因分布</h3><span class="sub">当前排队作业</span></div>
+      <div class="pie-wrap" id="pdPieWrap">
+        <svg id="pdPie" viewBox="0 0 200 200" style="width:160px;height:160px;flex-shrink:0"></svg>
+        <div class="legend" id="pdPieLeg" style="flex-direction:column;gap:6px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h3>排队作业列表</h3><span class="sub" id="pdCnt"></span></div>
+    <div class="tw" id="pdTable"></div>
+  </div>
+</div>
+
+<!-- ======= 4. 个人统计页 ======= -->
+<div class="page" id="page-user">
+  <div class="toolbar">
+    <div class="field"><label>用户</label>
+      <select id="usSel"><option value="">-- 选择用户 --</option></select>
+    </div>
+    <div class="field"><label>或输入</label>
+      <input type="text" id="usInput" placeholder="用户名后回车">
+    </div>
+    <div class="field"><label>时间范围</label>
+      <select id="usRange">
+        <option value="1d">近 1 天</option>
+        <option value="7d">近 7 天</option>
+        <option value="30d" selected>近 30 天</option>
+        <option value="90d">近 90 天</option>
+        <option value="all">全部</option>
+      </select>
+    </div>
+    <div class="field"><label>作业状态</label>
+      <select id="usState">
+        <option value="all">全部</option>
+        <option value="COMPLETED">COMPLETED</option>
+        <option value="FAILED">FAILED</option>
+        <option value="TIMEOUT">TIMEOUT</option>
+        <option value="CANCELLED">CANCELLED</option>
+      </select>
+    </div>
+    <div class="sp field"><label>导出</label>
+      <select id="usExport"><option value="">选择格式…</option><option value="csv">CSV</option><option value="json">JSON</option></select>
+    </div>
+  </div>
+
+  <div class="kpis" id="usKpis"></div>
+
+  <div class="card mb">
+    <div class="card-h"><h3>GPU 耗时趋势</h3><span class="sub">按作业开始时间归属</span>
+      <div class="r">
+        <div class="field"><label>粒度</label>
+          <select id="usGran"><option value="1d" selected>1 天</option><option value="1h">1 小时</option></select>
+        </div>
+        <div class="field"><label>指标</label>
+          <select id="usMetric">
+            <option value="gpuh">GPU 耗时（卡时）</option>
+            <option value="cnt">作业数</option>
+            <option value="util">平均 GPU 利用率</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <svg class="chart" id="usChart" viewBox="0 0 1000 220" preserveAspectRatio="none" style="height:200px"></svg>
+    <div class="legend" id="usLegend" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs" id="usTabs">
+      <button class="on" data-tab="his">历史作业</button>
+      <button data-tab="run">当前运行</button>
+      <button data-tab="pend">排队中</button>
+    </div>
+    <div class="hint">点击表格行左侧 ▸ 展开该作业的运行分析（CPU/内存/GPU 效率评分）。</div>
+    <div class="tw" id="usTable"></div>
+    <div id="usPager" style="display:flex;align-items:center;gap:10px;justify-content:flex-end;margin-top:10px;font-size:12px;color:var(--txt-3)"></div>
+  </div>
+</div>
+
+<!-- ======= 5. 名字映射页 ======= -->
+<div class="page" id="page-mapping">
+  <div class="toolbar">
+    <div class="field"><label>搜索</label>
+      <input type="text" id="mpSearch" placeholder="账号或显示名">
+    </div>
+  </div>
+
+  <div class="card mb">
+    <div class="card-h"><h3>待映射用户</h3><span class="sub" id="mpUnmappedCount"></span></div>
+    <div class="hint" style="margin-bottom:10px">映射名字供前端展示，不影响 Slurm 账号本身。多个账号合并同一显示名请联系管理员。</div>
+    <div class="tw" id="mpUnmappedTable"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h3>已映射用户</h3><span class="sub" id="mpMappedCount"></span></div>
+    <div class="tw" id="mpMappedTable"></div>
+  </div>
+</div>
+
+<!-- ======= 6. 项目组配置页 ======= -->
+<div class="page" id="page-groups">
+  <!-- 登录蒙层 -->
+  <div id="grpLogin" style="min-height:70vh;display:flex;align-items:center;justify-content:center">
+    <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:36px 40px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,.35)">
+      <div style="text-align:center;margin-bottom:28px">
+        <div style="width:44px;height:44px;background:rgba(59,130,246,.15);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        </div>
+        <div style="font-size:17px;font-weight:700;color:var(--txt)">管理员登录</div>
+        <div style="font-size:12px;color:var(--txt-3);margin-top:4px">集群配置</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div>
+          <label style="font-size:12px;color:var(--txt-3);display:block;margin-bottom:5px">用户名</label>
+          <input type="text" id="grpLoginUser" autocomplete="off" placeholder=""
+            style="width:100%;background:var(--panel-2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:14px;font-family:inherit;outline:none;transition:border-color .15s"
+            onfocus="this.style.borderColor='var(--acc)'" onblur="this.style.borderColor='var(--line)'">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--txt-3);display:block;margin-bottom:5px">密码</label>
+          <input type="password" id="grpLoginPass" autocomplete="current-password" placeholder=""
+            style="width:100%;background:var(--panel-2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:14px;font-family:inherit;outline:none;transition:border-color .15s"
+            onfocus="this.style.borderColor='var(--acc)'" onblur="this.style.borderColor='var(--line)'">
+        </div>
+        <div id="grpLoginMsg" style="font-size:12px;color:var(--crit);min-height:16px"></div>
+        <button id="grpLoginBtn"
+          style="width:100%;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:11px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:opacity .15s"
+          onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">登 录</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 项目组管理（登录后显示） -->
+  <div id="grpMain" style="display:none">
+    <div class="tabs" id="cfgTabs" style="display:flex;align-items:center">
+      <button class="on" data-tab="groups">项目组</button>
+      <button data-tab="nodes">节点映射</button>
+      <button id="grpLogoutBtn" style="margin-left:auto;margin-bottom:6px;border:1px solid var(--line);border-radius:7px;padding:5px 12px;font-size:12px">退出登录</button>
+    </div>
+    <div id="cfgGroups">
+    <div class="toolbar">
+      <div class="sp field">
+        <button id="grpAddBtn" style="background:var(--acc);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit">+ 新增项目组</button>
+      </div>
+    </div>
+
+    <div id="grpForm" class="card mb" style="display:none">
+      <div class="card-h"><h3 id="grpFormTitle">新增项目组</h3></div>
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div class="field" style="flex-direction:column;align-items:flex-start;gap:4px">
+          <label style="font-size:12px;color:var(--txt-3)">ID</label>
+          <input type="text" id="grpFormId" disabled style="width:70px;background:var(--panel);color:var(--txt-3);border:1px solid var(--line);border-radius:7px;padding:5px 10px;font-size:13px;font-family:inherit">
+        </div>
+        <div class="field" style="flex-direction:column;align-items:flex-start;gap:4px">
+          <label style="font-size:12px;color:var(--txt-3)">项目组名称</label>
+          <input type="text" id="grpFormName" placeholder="如 计算物理组" style="min-width:200px">
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="grpFormSave" style="background:var(--acc);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit">保存</button>
+          <button id="grpFormCancel" style="background:var(--panel-2);color:var(--txt-2);border:1px solid var(--line);border-radius:7px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit">取消</button>
+        </div>
+      </div>
+      <div id="grpFormMsg" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><h3>项目组列表</h3><span class="sub" id="grpCount"></span></div>
+      <div class="hint">ID 一旦创建永久冻结，只可修改名称。</div>
+      <div class="tw" id="grpTable"></div>
+    </div>
+    </div><!-- #cfgGroups -->
+
+    <div id="cfgNodes" style="display:none">
+      <div class="toolbar">
+        <div class="sp field">
+          <button id="cnAddBtn" style="background:var(--acc);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit">+ 新增节点</button>
+        </div>
+      </div>
+
+      <div id="cnForm" class="card mb" style="display:none">
+        <div class="card-h"><h3 id="cnFormTitle">新增节点</h3></div>
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+          <div class="field" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label>Slurm 节点名</label>
+            <input type="text" id="cnName" list="cnNameList" placeholder="如 h100-3" style="min-width:150px">
+            <datalist id="cnNameList"></datalist>
+          </div>
+          <div class="field" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label>IP / 主机名</label>
+            <input type="text" id="cnIp" placeholder="如 192.168.112.111" style="min-width:170px">
+          </div>
+          <div class="field" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label>端口</label>
+            <input type="text" id="cnPort" value="22" style="min-width:0;width:70px">
+          </div>
+          <div class="field" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label>SSH 用户</label>
+            <input type="text" id="cnUser" style="min-width:0;width:120px">
+          </div>
+          <div class="field" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label>SSH 密码</label>
+            <input type="text" id="cnPass" autocomplete="off" style="min-width:170px;-webkit-text-security:disc">
+          </div>
+          <div class="field" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label>备注</label>
+            <input type="text" id="cnRemark" placeholder="可选" style="min-width:150px">
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--txt-2);padding-bottom:8px">
+            <input type="checkbox" id="cnEnabled" checked> 启用采集
+          </label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button id="cnSave" style="background:var(--acc);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit">保存</button>
+          <button id="cnTest" style="background:var(--panel-2);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit">测试连接</button>
+          <button id="cnCancel" style="background:var(--panel-2);color:var(--txt-2);border:1px solid var(--line);border-radius:7px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit">取消</button>
+        </div>
+        <div id="cnMsg" style="font-size:12px;margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h3>算力节点映射</h3><span class="sub" id="cnCount"></span></div>
+        <div class="hint">采集器通过 SSH 登录这里配置的 IP 读取 GPU 数据；修改后下一个采集周期（约 30 秒）自动生效，无需重启。SSH 用户/密码留空则使用服务端默认账号。密码只写不读，页面不会回显。</div>
+        <div class="tw" id="cnTable"></div>
+      </div>
+    </div><!-- #cfgNodes -->
+  </div>
+</div>
+
+<div class="foot-note">数据源：slurmrestd + 聚合存储 · 当前为业务视图（运维指标：温度 / 功耗 / 硬件健康，将在「运维页面」后续支持）</div>
+
+</div><!-- .wrap -->
+
+<script>
+/* ==================== API 层 ==================== */
+const API = {
+  async get(path) {
+    const r = await fetch(path);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.code !== 0) throw new Error(j.message || 'API error');
+    return j.data;
+  },
+  clusterSummary: () => API.get('/api/cluster/summary'),
+  clusterTrend: (range, date) => API.get(`/api/cluster/trend?range=${range}${date?'&date='+date:''}`),
+  nodes: (sort='gpu_util') => API.get(`/api/nodes?sort=${sort}`),
+  node: name => API.get(`/api/node/${name}`),
+  nodeGpus: name => API.get(`/api/node/${name}/gpus`),
+  nodeJobs: name => API.get(`/api/node/${name}/jobs`),
+  nodeTrend: (name, p) => {
+    const q = new URLSearchParams({range: p.range, date_a: p.dateA, metrics: p.metric});
+    if (p.dateB) q.set('date_b', p.dateB);
+    if (p.gpu && p.gpu !== 'all') q.set('gpu', p.gpu);
+    return API.get(`/api/node/${encodeURIComponent(name)}/trend?${q}`);
+  },
+  dateRange: () => API.get('/api/meta/date-range'),
+  jobsPending: (p={}) => {
+    const params = new URLSearchParams({page: 1, page_size: 50, sort: 'wait_desc'});
+    if (p.user && p.user !== 'all' && p.user !== 'undefined') params.set('user', p.user);
+    if (p.gpu_req && p.gpu_req !== 'all' && p.gpu_req !== 'undefined') params.set('gpu_req', p.gpu_req);
+    ['partition', 'node', 'reason'].forEach(k => { if (p[k] && p[k] !== 'all') params.set(k, p[k]); });
+    if (p.sort) params.set('sort', p.sort);
+    return API.get(`/api/jobs/pending?${params.toString()}`);
+  },
+  pendingSummary: (range='15m') => API.get(`/api/jobs/pending/summary?range=${range}`),
+  metaUsers: () => API.get('/api/meta/users'),
+  metaNodes: () => API.get('/api/meta/nodes'),
+  metaPartitions: () => API.get('/api/meta/partitions'),
+  userSummary: (name,range) => API.get(`/api/user/${name}/summary?range=${range}`),
+  userJobs: (name, state, p = {}) => {
+    const q = new URLSearchParams({state, page: p.page || 1, page_size: 20});
+    if (p.range && p.range !== 'all') q.set('range', p.range);
+    if (p.status && p.status !== 'all') q.set('status', p.status);
+    return API.get(`/api/user/${encodeURIComponent(name)}/jobs?${q}`);
+  },
+  userTrend: (name, range, gran) => API.get(`/api/user/${encodeURIComponent(name)}/trend?range=${range === 'all' ? '90d' : range}&granularity=${gran}`),
+  jobAnalysis: id => API.get(`/api/job/${id}/analysis`),
+  clusterHealth: () => API.get('/api/cluster/health'),
+  topUsers: (range='7d', metric='gpu_hours', limit=10) => API.get(`/api/cluster/top-users?range=${range}&metric=${metric}&limit=${limit}`),
+  topPending: (limit=10) => API.get(`/api/cluster/top-pending?limit=${limit}`),
+};
+
+/* ==================== 工具函数 ==================== */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function barColor(p) {
+  return p >= 90 ? 'var(--crit)' : p >= 70 ? 'var(--warn)' : 'var(--acc)';
+}
+function tagCls(state) {
+  const s = (state||'').toLowerCase();
+  if (s === 'idle') return 't-idle';
+  if (s === 'allocated') return 't-crit';
+  if (s === 'mixed') return 't-warn';
+  if (s === 'down' || s === 'drain') return 't-mute';
+  return 't-mute';
+}
+function stateLabel(s) {
+  return {idle:'空闲',mixed:'混合',allocated:'占满',down:'故障',drain:'维护'}[s?.toLowerCase()] || s || '—';
+}
+function durFmt(sec) {
+  if (!sec) return '—';
+  const d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600), m = Math.floor(sec%3600/60);
+  if (d) return `${d}天${h}时`;
+  if (h) return `${h}时${m}分`;
+  return `${m}分`;
+}
+function waitFmt(str) {
+  if (!str) return '—';
+  const [h,m] = str.split(':');
+  const total = parseInt(h)*60+parseInt(m);
+  if (total >= 60) return `${Math.floor(total/60)}h${total%60}m`;
+  return `${total}m`;
+}
+function emptyBox(msg) {
+  return `<div class="empty">${msg}</div>`;
+}
+
+/* ==================== SVG 折线图 ==================== */
+const COL = {
+  gpu_used: '#3b82f6', gpu_util: '#a855f7',
+  job_running: '#3fb950', job_pending: '#d29922',
+  alloc_pct: '#3b82f6', gpu_util_pct: '#a855f7',
+  avg_wait: '#d29922', p90_wait: '#f85149',
+};
+
+function lineChart(svgEl, series, opts={}) {
+  if (!svgEl) return;
+  const vb = svgEl.getAttribute('viewBox').split(' ');
+  const W = +vb[2], H = +vb[3];
+  const pl = 46, pr = 14, pt = 12, pb = 24;
+  const iw = W-pl-pr, ih = H-pt-pb;
+
+  const allVals = series.flatMap(s => s.data.filter(v => v != null));
+  const mn = opts.min ?? 0;
+  let mx = opts.max ?? (allVals.length ? Math.max(...allVals) : 1);
+  if (opts.max == null) mx = mx * 1.12;  // 调用方指定了上限（如百分比 100）就不要再放大
+  mx = mx || 1;
+
+  const n = series[0]?.data.length || 1;
+  const X = i => pl + iw * (n <= 1 ? 0 : i / (n-1));
+  const Y = v => pt + ih - ih * ((v - mn) / (mx - mn || 1));
+
+  let g = '';
+  for (let k = 0; k <= 4; k++) {
+    const y = pt + ih * k / 4;
+    const v = mx - (mx-mn) * k / 4;
+    g += `<line x1="${pl}" y1="${y}" x2="${W-pr}" y2="${y}" stroke="#2a3444" stroke-width="1"/>`;
+    g += `<text x="${pl-6}" y="${y+4}" fill="#6e7f95" font-size="10" text-anchor="end">${v.toFixed(v>100?0:1)}</text>`;
+  }
+
+  const step = Math.ceil(n / 8);
+  (opts.labels||[]).forEach((lbl, i) => {
+    if (i % step === 0 || i === n-1) {
+      g += `<text x="${X(i)}" y="${H-6}" fill="#6e7f95" font-size="10" text-anchor="middle">${esc(lbl)}</text>`;
+    }
+  });
+
+  series.forEach(s => {
+    const pts = s.data.map((v,i) => v == null ? null : `${X(i).toFixed(1)},${Y(v).toFixed(1)}`);
+    // split on nulls
+    let seg = [];
+    pts.forEach(p => {
+      if (p == null) { if (seg.length) { g += poly(seg, s); seg = []; } }
+      else seg.push(p);
+    });
+    if (seg.length) g += poly(seg, s);
+
+    if (opts.area && s.data.length > 1) {
+      const validPts = pts.filter(Boolean);
+      if (validPts.length > 1) {
+        const first = validPts[0].split(',')[0];
+        const last = validPts[validPts.length-1].split(',')[0];
+        g += `<polygon points="${first},${pt+ih} ${validPts.join(' ')} ${last},${pt+ih}" fill="${s.color}" opacity="0.08"/>`;
+      }
+    }
+  });
+
+  svgEl.innerHTML = g;
+}
+
+function poly(pts, s) {
+  return `<polyline points="${pts.join(' ')}" fill="none" stroke="${s.color}" stroke-width="${s.dim?1.5:2}" stroke-linejoin="round" opacity="${s.dim?.5:1}"/>`;
+}
+
+/* ==================== 1. 总览页 ==================== */
+let ovData = null;
+
+async function loadOverview() {
+  try {
+    const [summary, nodes, health] = await Promise.all([
+      API.clusterSummary(),
+      API.nodes($('#ovSort').value),
+      API.clusterHealth()
+    ]);
+    ovData = {summary, nodes, health};
+    renderOverview();
+    loadTopUsers(); // 加载用户排行榜
+  } catch(e) {
+    console.error('overview error', e);
+  }
+}
+
+function renderOverview() {
+  if (!ovData) return;
+  const {summary, nodes, health} = ovData;
+
+  // 登录机健康状态（显示在节点列表卡片右上角）
+  if (health?.login_node) {
+    const ln = health.login_node;
+    const statusDot = ln.status === 'ok' ? '🟢' : '🔴';
+    const statusText = ln.status === 'ok' ? '登录机正常' : `登录机连接失败 (${ln.consecutive_failures}次)`;
+    const title = ln.status === 'ok'
+      ? `最后成功: ${ln.last_success_at || '—'}`
+      : `错误: ${ln.last_error_msg || '未知'}\n最后失败: ${ln.last_failure_at || '—'}`;
+    $('#loginNodeStatus').innerHTML = `<span title="${esc(title)}" style="cursor:help">${statusDot} ${statusText}</span>`;
+  } else {
+    $('#loginNodeStatus').innerHTML = '';
+  }
+
+  // 构建节点健康状态映射（用于节点列表显示状态灯）
+  const nodeHealthMap = {};
+  if (health?.compute_nodes) {
+    health.compute_nodes.forEach(n => {
+      nodeHealthMap[n.name] = n;
+    });
+  }
+
+  // KPIs
+  const g = summary.gpu || {};
+  const c = summary.cpu || {};
+  const m = summary.mem || {};
+  const j = summary.jobs || {};
+  const nd = summary.nodes || {};
+
+  const gpuPct = g.total ? g.used/g.total*100 : 0;
+  const cpuPct = c.total ? c.used/c.total*100 : 0;
+  const memPct = m.total_gb ? m.used_gb/m.total_gb*100 : 0;
+
+  const kpis = [
+    {t:'GPU 使用 / 总量', v:g.used??0, u:`/ ${g.total??0} 卡`, p:gpuPct, foot:`集群 GPU 占用率`, color:barColor(gpuPct)},
+    {t:'CPU 使用 / 总量', v:c.used??0, u:`/ ${c.total??0} 核`, p:cpuPct, foot:'已分配核心数', color:barColor(cpuPct)},
+    {t:'内存使用', v:(m.used_gb??0).toFixed(1), u:`/ ${(m.total_gb??0).toFixed(0)} GB`, p:memPct, foot:'节点实测已用内存', color:barColor(memPct)},
+    {t:'GPU 平均利用率', v:(g.utilization_avg??0).toFixed(1), u:'%', p:g.utilization_avg??0, foot:'仅统计已占用卡', color:(g.utilization_avg??0)<40?'var(--warn)':'var(--acc)'},
+    {t:'运行 / 排队作业', v:j.running??0, u:` / ${j.pending??0} 排队`, p:Math.min(100,(j.pending??0)/Math.max(1,j.running??1)*100), foot:'当前调度中任务', color:'var(--ok)'},
+    {t:'节点状态', v:nd.total??0, u:'个节点', p:(((nd.idle??0)+(nd.mixed??0)+(nd.allocated??0))/Math.max(1,nd.total??1))*100, foot:`空闲 ${nd.idle??0} · 混合 ${nd.mixed??0} · 故障 ${nd.down??0}`, color:'var(--warn)'},
+  ];
+  $('#ovKpis').innerHTML = kpis.map(k => `
+    <div class="kpi">
+      <div class="t">${k.t}</div>
+      <div class="v">${k.v}<small> ${k.u}</small></div>
+      <div class="bar"><i style="width:${Math.min(100,k.p).toFixed(0)}%;background:${k.color}"></i></div>
+      <div class="foot">${k.foot}</div>
+    </div>`).join('');
+
+  // Trend
+  const range = $('#ovRange').value;
+  $('#ovRangeTxt').textContent = `${range} 粒度 · 今日`;
+
+  // Load trend async
+  const metric = $('#ovMetric').value;
+  API.clusterTrend(range).then(trend => {
+    if (!trend.times?.length) {
+      $('#ovChart').innerHTML = `<text x="500" y="130" fill="#6e7f95" font-size="13" text-anchor="middle">暂无趋势数据（等待聚合器写入）</text>`;
+      return;
+    }
+    const data = trend[metric] || [];
+    lineChart($('#ovChart'), [{data, color: COL[metric] || '#3b82f6'}], {
+      labels: trend.times, area: true,
+      max: metric === 'gpu_used' ? (g.total || undefined) : metric === 'gpu_util' ? 100 : undefined
+    });
+    const cur = data.at(-1);
+    const unit = metric === 'gpu_used' ? ' 卡' : metric === 'gpu_util' ? ' %' : ' 个';
+    const label = $('#ovMetric').selectedOptions[0]?.text || metric;
+    $('#ovLegend').innerHTML = `<span class="lopt"><i style="background:${COL[metric]}"></i>${label}</span>
+      <span style="color:var(--txt-3)">当前 ${cur != null ? cur : '—'}${unit}</span>`;
+  }).catch(() => {
+    $('#ovChart').innerHTML = `<text x="500" y="130" fill="#6e7f95" font-size="13" text-anchor="middle">趋势数据加载失败</text>`;
+  });
+
+  // Nodes
+  const stateFilter = $('#ovState').value;
+  const sortVal = $('#ovSort').value;
+  const view = $('#ovView').value;
+
+  const partFilter = $('#ovPart').value;
+  let list = nodes.filter(n => (stateFilter === 'all' || n.state === stateFilter) && (partFilter === 'all' || n.partition === partFilter));
+  if (sortVal === 'name') list.sort((a,b) => a.name.localeCompare(b.name));
+  else if (sortVal === 'load') list.sort((a,b) => (b.load ?? -1) - (a.load ?? -1));
+  else list.sort((a,b) => (b.gpu?.util_pct ?? -1) - (a.gpu?.util_pct ?? -1) || (b.gpu?.used/Math.max(1,b.gpu?.total) - a.gpu?.used/Math.max(1,a.gpu?.total)));
+
+  $('#ovNodeCnt').textContent = `${list.length} 个节点`;
+
+  if (view === 'card') {
+    $('#ovNodes').style.display = 'grid';
+    $('#ovTable').style.display = 'none';
+    $('#ovNodes').innerHTML = list.map(n => {
+      const gTotal = n.gpu?.total || 0;
+      const gUsed = n.gpu?.used || 0;
+      const gPct = gTotal ? gUsed/gTotal*100 : 0;
+      const cpuPct2 = n.cpu?.total ? n.cpu.used/n.cpu.total*100 : 0;
+      const memPct2 = n.mem?.total_gb ? n.mem.used_gb/n.mem.total_gb*100 : 0;
+      const sparkData = n.trend || [];
+      // trend 数据不足时用负载值填充占位曲线，保证卡片高度一致
+      const sparkColor = barColor(n.gpu?.util_pct ?? (gPct || n.load || 0));
+      const sparkSvg = sparkData.length > 1
+        ? buildSparkline(sparkData, sparkColor)
+        : (n.load != null ? buildSparkline([n.load], sparkColor) : '');
+
+      // 节点健康状态灯（卡片视图）
+      const nh = nodeHealthMap[n.name];
+      const healthDot = nodeHealthDot(nh);
+
+      return `<div class="node" onclick="gotoNode('${esc(n.name)}')">
+        <div class="n1">
+          <div><div class="nm" style="display:flex;align-items:center">${healthDot}${esc(n.name)}</div><div class="np">分区 ${esc(n.partition||'—')} · GPU ${gTotal} 卡</div></div>
+          <span class="tag ${tagCls(n.state)}">${stateLabel(n.state)}</span>
+        </div>
+        ${gTotal ? `<div class="meter">
+          <div class="l"><span>GPU</span><b>${gUsed}/${gTotal} 卡 · ${gPct.toFixed(0)}%</b></div>
+          <div class="mbar"><i style="width:${gPct}%;background:${barColor(gPct)}"></i></div>
+        </div>` : ''}
+        ${gTotal && n.gpu?.util_pct != null ? `<div class="meter">
+          <div class="l"><span>GPU 利用率</span><b>${n.gpu.util_pct}%</b></div>
+          <div class="mbar"><i style="width:${n.gpu.util_pct}%;background:${barColor(n.gpu.util_pct)}"></i></div>
+        </div>` : ''}
+        <div class="meter">
+          <div class="l"><span>CPU</span><b>${n.cpu?.used||0}/${n.cpu?.total||0} 核 · ${cpuPct2.toFixed(0)}%</b></div>
+          <div class="mbar"><i style="width:${cpuPct2}%;background:${barColor(cpuPct2)}"></i></div>
+        </div>
+        <div class="meter">
+          <div class="l"><span>内存</span><b>${(n.mem?.used_gb||0).toFixed(1)}/${(n.mem?.total_gb||0).toFixed(1)} GB · ${memPct2.toFixed(0)}%</b></div>
+          <div class="mbar"><i style="width:${memPct2}%;background:${barColor(memPct2)}"></i></div>
+        </div>
+        ${n.load != null ? `<div class="meter">
+          <div class="l"><span>负载 load</span><b>${n.load}%</b></div>
+          <div class="mbar"><i style="width:${Math.min(100,n.load||0)}%;background:${barColor(n.load||0)}"></i></div>
+        </div>` : ''}
+        ${sparkSvg}
+      </div>`;
+    }).join('') || emptyBox('无匹配节点');
+  } else {
+    $('#ovNodes').style.display = 'none';
+    $('#ovTable').style.display = 'block';
+    $('#ovTable').innerHTML = `<table><thead><tr>
+      <th>节点</th><th>分区</th><th>状态</th><th>GPU</th><th>GPU利用率</th><th>CPU</th><th>内存</th><th>负载</th>
+    </tr></thead><tbody>` +
+    list.map(n => {
+      const gTotal = n.gpu?.total || 0;
+      const gUsed = n.gpu?.used || 0;
+
+      // 节点健康状态灯（表格视图）
+      const nh = nodeHealthMap[n.name];
+      const healthDot = nodeHealthDot(nh);
+
+      return `<tr style="cursor:pointer" onclick="gotoNode('${esc(n.name)}')">
+        <td><b style="display:flex;align-items:center">${healthDot}${esc(n.name)}</b></td>
+        <td>${esc(n.partition||'—')}</td>
+        <td><span class="tag ${tagCls(n.state)}">${stateLabel(n.state)}</span></td>
+        <td class="num">${gUsed}/${gTotal}</td>
+        <td class="num">${n.gpu?.util_pct != null ? n.gpu.util_pct + '%' : '—'}</td>
+        <td class="num">${n.cpu?.used||0}/${n.cpu?.total||0}</td>
+        <td class="num">${(n.mem?.used_gb||0).toFixed(1)}/${(n.mem?.total_gb||0).toFixed(1)} GB</td>
+        <td class="num">${n.load != null ? n.load + '%' : '—'}</td>
+      </tr>`;
+    }).join('') + `</tbody></table>`;
+  }
+}
+
+function nodeHealthDot(nh) {
+  if (!nh) return '';
+  const DOT = 'display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:5px;flex-shrink:0';
+  if (nh.status === 'ok')
+    return '<span style="' + DOT + ';background:var(--ok)" title="连接正常"></span>';
+  if (nh.status === 'degraded')
+    return '<span style="' + DOT + ';background:var(--warn)" title="连接不稳定"></span>';
+  const msg = (nh.last_error_msg || '连接失败').replace(/"/g, '&quot;');
+  return '<span style="' + DOT + ';background:var(--crit)" title="' + msg + '"></span>';
+}
+
+function buildSparkline(data, color) {
+  if (!data || data.length < 2) return '';
+  const w = 238, h = 30;
+  const mn = Math.min(...data), mx = Math.max(...data);
+  const pts = data.map((v,i) =>
+    `${(i*w/(data.length-1)).toFixed(1)},${(h-2-(h-6)*(v-mn)/(mx-mn||1)).toFixed(1)}`
+  ).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6" opacity=".85"/>
+  </svg>`;
+}
+
+async function loadTopUsers() {
+  const range = $('#topUserRange').value;
+  const metric = $('#topUserMetric').value;
+  const limit = parseInt($('#topUserLimit').value || '10', 10);
+
+  // 排队时长榜：独立接口，不需要时间范围，隐藏时间范围选择器
+  const isPending = metric === 'pending_wait';
+  $('#topUserRange').closest('.field').style.display = isPending ? 'none' : '';
+
+  try {
+    if (isPending) {
+      // --- 排队时长 TOP ---
+      const data = await API.topPending(limit);
+      const list = data.top_pending || [];
+
+      $('#topUserSub').textContent = '当前排队作业（实时）';
+
+      // 切换表头
+      $('#topUserThead').innerHTML = `<tr>
+        <th style="width:50px">排名</th>
+        <th style="width:80px">作业ID</th>
+        <th>用户</th>
+        <th>作业名</th>
+        <th style="width:70px">申请GPU</th>
+        <th style="width:120px">等待时长</th>
+        <th style="width:120px">排队原因</th>
+      </tr>`;
+
+      if (!list.length) {
+        $('#topUserList').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--txt-3);padding:20px">当前没有排队作业</td></tr>';
+        return;
+      }
+
+      $('#topUserList').innerHTML = list.map((j, i) => {
+        const rank = i + 1;
+        const rankColor = rank === 1 ? 'var(--crit)' : rank === 2 ? 'var(--warn)' : 'var(--txt-2)';
+        const waitColor = j.wait_sec > 3600 ? 'var(--crit)' : j.wait_sec > 900 ? 'var(--warn)' : 'var(--txt)';
+        return `<tr onclick="gotoPending('${esc(j.user)}');" style="cursor:pointer">
+          <td class="num"><b style="color:${rankColor}">${rank}</b></td>
+          <td class="num" style="font-size:12px">${esc(j.job_label)}</td>
+          <td><b>${esc(j.user)}</b></td>
+          <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${esc(j.job_name)}">${esc(j.job_name)}</td>
+          <td class="num">${j.req_gpus || '—'}</td>
+          <td class="num"><b style="color:${waitColor}">${esc(j.wait_fmt)}</b></td>
+          <td style="font-size:12px;color:var(--txt-2)">${esc(j.reason)}</td>
+        </tr>`;
+      }).join('');
+
+    } else {
+      // --- 用户历史统计 TOP ---
+      const data = await API.topUsers(range, metric, limit);
+      const list = data.top_users || [];
+
+      const rangeLabel = {'1d':'最近 1 天', '7d':'最近 7 天', '30d':'最近 30 天', 'all':'全部'}[range] || range;
+      $('#topUserSub').textContent = rangeLabel;
+
+      // 还原表头
+      $('#topUserThead').innerHTML = `<tr>
+        <th style="width:50px">排名</th>
+        <th>用户</th>
+        <th style="width:120px">GPU 卡时</th>
+        <th style="width:100px">作业数</th>
+        <th style="width:120px">平均利用率</th>
+        <th style="width:100px">成功率</th>
+      </tr>`;
+
+      if (!list.length) {
+        $('#topUserList').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--txt-3);padding:20px">暂无数据</td></tr>';
+        return;
+      }
+
+      const utilAsc = metric === 'gpu_util_asc';
+      $('#topUserList').innerHTML = list.map((u, i) => {
+        const rank = i + 1;
+        let rankColor;
+        if (utilAsc) {
+          rankColor = rank === 1 ? 'var(--crit)' : rank === 2 ? 'var(--warn)' : 'var(--txt-2)';
+        } else {
+          rankColor = rank === 1 ? '#d4af37' : rank === 2 ? '#c0c0c0' : rank === 3 ? '#cd7f32' : 'var(--txt-2)';
+        }
+        return `<tr onclick="gotoUser('${esc(u.user)}');" style="cursor:pointer">
+          <td class="num"><b style="color:${rankColor}">${rank}</b></td>
+          <td><b>${esc(u.user)}</b></td>
+          <td class="num">${u.gpu_hours.toFixed(1)}</td>
+          <td class="num">${u.job_count}</td>
+          <td class="num">${u.gpu_util_avg != null ? u.gpu_util_avg.toFixed(1) + '%' : '—'}</td>
+          <td class="num">${u.success_rate.toFixed(1)}%</td>
+        </tr>`;
+      }).join('');
+    }
+  } catch(e) {
+    console.error('top users error', e);
+    const cols = isPending ? 7 : 6;
+    $('#topUserList').innerHTML = `<tr><td colspan="${cols}" style="text-align:center;color:var(--crit);padding:20px">加载失败</td></tr>`;
+  }
+}
+
+function gotoNode(name) {
+  $('#ndSel').value = name;
+  switchPage('node');
+  loadNodePage();
+}
+
+/* ==================== 2. GPU 详情页 ==================== */
+let ndTab = 'run';
+
+async function loadNodePage() {
+  const name = $('#ndSel').value;
+  if (!name) return;
+
+  try {
+    const [detail, gpus, jobs] = await Promise.all([
+      API.node(name), API.nodeGpus(name), API.nodeJobs(name)
+    ]);
+
+    // KPIs
+    const n = detail;
+    const gPct = n.gpu?.total ? n.gpu.used/n.gpu.total*100 : 0;
+    const cpuPct = n.cpu?.total ? n.cpu.used/n.cpu.total*100 : 0;
+    const memPct = n.mem?.total_gb ? n.mem.used_gb/n.mem.total_gb*100 : 0;
+
+    const kpis = [
+      {t:'GPU 使用', v:n.gpu?.used??0, u:`/ ${n.gpu?.total??0} 卡`, p:gPct, foot:`分配率 ${gPct.toFixed(0)}%` + (n.gpu?.utilization_avg != null ? ` · 占用卡利用率 ${n.gpu.utilization_avg}%` : ''), color:barColor(gPct)},
+      {t:'CPU 使用', v:n.cpu?.used??0, u:`/ ${n.cpu?.total??0} 核`, p:cpuPct, foot:`分配率 ${cpuPct.toFixed(0)}%` + (n.cpu?.util_pct != null ? ` · 实际 ${n.cpu.util_pct}% · load ${n.cpu.load1}` : ''), color:barColor(cpuPct)},
+      {t:'内存使用', v:(n.mem?.used_gb??0).toFixed(1), u:`/ ${(n.mem?.total_gb??0).toFixed(1)} GB`, p:memPct, foot:`使用率 ${memPct.toFixed(0)}% · ${n.mem?.source === 'host' ? '节点实测' : 'Slurm 分配值'}`, color:barColor(memPct)},
+      {t:'运行 / 排队', v:n.job_count?.running??0, u:` / ${n.job_count?.pending??0}`, p:0, foot:'本节点作业数', color:'var(--ok)'},
+    ];
+    $('#ndKpis').innerHTML = kpis.map(k => `
+      <div class="kpi">
+        <div class="t">${k.t}</div>
+        <div class="v">${k.v}<small> ${k.u}</small></div>
+        <div class="bar"><i style="width:${Math.min(100,k.p).toFixed(0)}%;background:${k.color}"></i></div>
+        <div class="foot">${k.foot}</div>
+      </div>`).join('');
+
+    // GPU cards（数据来自 agent.py 采集的 gpu_snapshots）
+    const age = gpus[0]?.age_seconds;
+    $('#ndGpuSub').textContent = gpus.length
+      ? `共 ${gpus.length} 卡 · 在用 ${gpus.filter(g=>g.state==='used').length} 卡`
+        + (age!=null ? ` · ${age>90 ? '⚠ 数据已过期 ' : '更新于 '}${Math.round(age)} 秒前` : '')
+      : '无 GPU 数据';
+    // GPU 卡下拉：保留当前选择（切换节点后卡数变化则回退到全部）
+    const gsel = $('#ndGpu'), prevGpu = gsel.value;
+    gsel.innerHTML = `<option value="all">全部卡</option>` + gpus.map(g => `<option value="${g.gpu_id}">GPU ${g.gpu_id}</option>`).join('');
+    gsel.value = [...gsel.options].some(o => o.value === prevGpu) ? prevGpu : 'all';
+    const shown = gpus.filter(g => gsel.value === 'all' || String(g.gpu_id) === gsel.value);
+    if (shown.length) {
+      $('#ndGpus').innerHTML = shown.map(g => {
+        const busy = g.state === 'used';
+        const util = g.util_pct ?? 0;
+        const gb = v => v==null ? '—' : (v/1024).toFixed(v>=10240 ? 0 : 1);
+        const users = (g.procs||[]).length ? esc([...new Set(g.procs.map(p=>p.user))].join(', ')) : '';
+        const who = g.job_id ? `作业 ${g.job_id} · ${users}` : (users || '空闲');
+        return `<div class="gpu ${busy?'busy':''}">
+          <div class="g1"><span>GPU ${g.gpu_id}</span>
+            <span class="tag ${busy?(util>90?'t-crit':'t-ok'):'t-idle'}">${busy?'BUSY':'IDLE'}</span>
+          </div>
+          <div class="pct" style="color:${busy?barColor(util):'var(--idle)'}">${g.util_pct??'—'}<span style="font-size:12px;color:var(--txt-3)">%</span></div>
+          <div class="mbar" style="margin-top:7px"><i style="width:${util}%;background:${barColor(util)}"></i></div>
+          <div class="gsub">显存 ${gb(g.mem_used_mb)}/${gb(g.mem_total_mb)} GB</div>
+          <div class="gsub">${g.temp_c!=null?g.temp_c+'°C':'—'} · ${g.power_w!=null?Math.round(g.power_w)+'W':'—'}</div>
+          <div class="gsub" title="${who}">${who}</div>
+        </div>`;
+      }).join('');
+    } else {
+      $('#ndGpus').innerHTML = emptyBox('暂无 GPU 单卡数据（请在「集群配置」中添加该节点的 IP）');
+    }
+
+    // Jobs table
+    renderNodeJobs(jobs);
+
+    // Trend
+    loadNodeTrend(name);
+
+  } catch(e) {
+    console.error('node page error', e);
+  }
+}
+
+const ND_CMP_COLORS = ['#3b82f6', '#a855f7'];
+
+async function loadNodeTrend(name) {
+  const metric = $('#ndMetric').value, range = $('#ndRange').value;
+  const dateA = $('#ndCmpA').value, dateB = $('#ndCmpB').value;
+  const noData = msg => { $('#ndChart').innerHTML = `<text x="500" y="130" fill="#6e7f95" font-size="13" text-anchor="middle">${msg}</text>`; $('#ndLegend').innerHTML = ''; };
+  if (!dateA) return noData('暂无可对比的日期');
+
+  try {
+    const t = await API.nodeTrend(name, {range, dateA, dateB, metric, gpu: $('#ndGpu').value});
+    const days = t.dates || [];
+    const seriesArr = days.map((d, i) => ({data: t.series[metric]?.[d] || [], color: ND_CMP_COLORS[i], dim: i > 0}));
+    if (!seriesArr.some(x => x.data.some(v => v != null))) return noData('所选日期暂无该指标数据（采集开始后会逐步积累）');
+    lineChart($('#ndChart'), seriesArr, {labels: t.times, max: 100, area: true});
+    $('#ndLegend').innerHTML = days.map((d, i) => {
+      const vals = seriesArr[i].data.filter(v => v != null);
+      const avg = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : '—';
+      const peak = vals.length ? Math.max(...vals).toFixed(1) : '—';
+      return `<span class="lopt" style="border-color:${ND_CMP_COLORS[i]}55"><i style="background:${ND_CMP_COLORS[i]}"></i>${esc(d)}
+        <span style="color:var(--txt-3)">均值 ${avg}% · 峰值 ${peak}%</span></span>`;
+    }).join('') + `<span style="color:var(--txt-3);margin-left:auto">粒度 ${$('#ndRange').selectedOptions[0].text}</span>`;
+  } catch (e) {
+    console.error('node trend error', e);
+    noData('趋势数据加载失败');
+  }
+}
+
+/* 节点页下拉：节点按分区过滤；对比日期取真正有数据的日期 */
+let ndAllNodes = [];
+function ndFillNodes() {
+  const part = $('#ndPart').value, sel = $('#ndSel'), prev = sel.value;
+  const list = ndAllNodes.filter(n => part === 'all' || n.partition === part);
+  sel.innerHTML = list.map(n => `<option value="${esc(n.name)}">${esc(n.name)}</option>`).join('');
+  if (list.some(n => n.name === prev)) sel.value = prev;
+}
+async function ndFillDates() {
+  try {
+    const r = await API.dateRange();
+    const days = r.available || [];
+    const opt = d => `<option value="${d}">${d}${d === r.today ? '（今天）' : ''}</option>`;
+    $('#ndCmpA').innerHTML = days.map(opt).join('');
+    $('#ndCmpB').innerHTML = `<option value="">不对比</option>` + days.map(opt).join('');
+    $('#ndCmpA').value = days.includes(r.today) ? r.today : (days[0] || '');
+    $('#ndCmpB').value = days.find(d => d !== $('#ndCmpA').value) || '';
+  } catch (e) { console.error('date range error', e); }
+}
+
+function renderNodeJobs(jobs) {
+  const running = jobs.running || [];
+  const pending = jobs.pending || [];
+  const rows = ndTab === 'run' ? running : pending;
+  const lvl = (v, w, c) => v >= c ? 't-crit' : v >= w ? 't-warn' : 't-ok';
+  const dash = v => v == null || v === '' ? '—' : v;
+  const userLink = u => `<a onclick="jumpUser('${esc(u)}')">${esc(u)}</a>`;
+
+  if (ndTab === 'run') {
+    $('#ndJobs').innerHTML = `<table><thead><tr>
+      <th>作业ID</th><th>用户</th><th>分区</th><th>GPU</th><th>CPU</th><th>内存</th>
+      <th>开始时间</th><th>运行时长</th><th>GPU利用率</th>
+    </tr></thead><tbody>` +
+    (rows.length ? rows.map(j => `<tr>
+      <td>${j.job_label||j.job_id}</td>
+      <td>${userLink(j.user)}</td>
+      <td>${esc(j.partition)}</td>
+      <td class="num">${j.gpu_num}</td>
+      <td class="num">${j.cpu_num}</td>
+      <td class="num">${j.mem_gb} GB</td>
+      <td>${dash(j.start_time)}</td>
+      <td class="num">${dash(j.duration)}</td>
+      <td class="num">${j.gpu_util_avg==null ? '—' : `<span class="tag ${lvl(j.gpu_util_avg,70,90)}">${j.gpu_util_avg}%</span>`}</td>
+    </tr>`).join('') : `<tr><td colspan="9" class="empty">该节点当前无运行作业</td></tr>`) +
+    `</tbody></table>`;
+  } else {
+    $('#ndJobs').innerHTML = `<table><thead><tr>
+      <th>作业ID</th><th>用户</th><th>分区</th><th>GPU需求</th><th>提交时间</th><th>已等待</th>
+      <th>等待原因</th><th>优先级</th><th>排队位次</th>
+    </tr></thead><tbody>` +
+    (rows.length ? rows.map(j => `<tr>
+      <td>${j.job_label||j.job_id}</td>
+      <td>${userLink(j.user)}</td>
+      <td>${esc(dash(j.partition))}</td>
+      <td class="num">${j.req_gpu} 卡</td>
+      <td>${dash(j.submit_time)}</td>
+      <td class="num"><span class="tag t-warn">${waitFmt(j.wait_duration)}</span></td>
+      <td>${j.reason ? `<span class="tag ${j.reason==='Resources'?'t-warn':j.reason==='NodeDown'?'t-crit':'t-mute'}">${esc(j.reason)}</span>` : '—'}</td>
+      <td class="num">${dash(j.priority)}</td>
+      <td class="num">${j.queue_pos==null ? '—' : '#'+j.queue_pos}</td>
+    </tr>`).join('') : `<tr><td colspan="9" class="empty">该节点当前无排队作业</td></tr>`) +
+    `</tbody></table>`;
+  }
+}
+
+function gotoUser(name) {
+  $('#usSel').value = '';
+  $('#usInput').value = name;
+  switchPage('user');
+  loadUserPage();
+}
+
+function gotoPending(user) {
+  // 跳转到排队页并按用户过滤
+  switchPage('pending');
+  if (user && $('#pdUser')) $('#pdUser').value = user;
+  loadPendingPage();
+}
+
+/* ==================== 3. 排队作业页 ==================== */
+async function loadPendingPage() {
+  try {
+    const [data, summary] = await Promise.all([
+      API.jobsPending({
+        user: $('#pdUser').value !== 'all' ? $('#pdUser').value : undefined,
+        gpu_req: $('#pdGpu').value !== 'all' ? $('#pdGpu').value : undefined,
+        partition: $('#pdPart').value,
+        node: $('#pdNode').value,
+        reason: $('#pdReason').value,
+        sort: $('#pdSort').value,
+      }),
+      API.pendingSummary($('#pdRange').value),
+    ]);
+
+    // KPIs
+    const kpis = [
+      {t:'排队作业总数', v:summary.pending_total??0, u:'个', p:Math.min(100,(summary.pending_total??0)/2), foot:'集群当前 pending', color:'var(--warn)'},
+      {t:'请求 GPU 总数', v:summary.gpu_demand??0, u:'卡', p:Math.min(100,(summary.gpu_demand??0)*5), foot:'排队作业申请的卡数', color:'var(--acc)'},
+      {t:'平均等待时长', v:(summary.avg_wait_min??0), u:' 分钟', p:Math.min(100,(summary.avg_wait_min??0)/30*100), foot:`等待超30分钟: ${summary.long_pending??0} 个`, color:(summary.avg_wait_min??0)>30?'var(--crit)':'var(--warn)'},
+      {t:'长时间排队', v:summary.long_pending??0, u:'个', p:summary.pending_total?(summary.long_pending??0)/(summary.pending_total)*100:0, foot:'等待 > 30 分钟', color:'var(--crit)'},
+    ];
+    $('#pdKpis').innerHTML = kpis.map(k => `
+      <div class="kpi">
+        <div class="t">${k.t}</div>
+        <div class="v">${k.v}<small> ${k.u}</small></div>
+        <div class="bar"><i style="width:${Math.min(100,k.p).toFixed(0)}%;background:${k.color}"></i></div>
+        <div class="foot">${k.foot}</div>
+      </div>`).join('');
+
+    // Wait trend chart
+    const wt = summary.wait_trend || {};
+    if (wt.times?.length) {
+      lineChart($('#pdChart'), [
+        {data: wt.avg_wait, color: COL.avg_wait, label: '平均等待'},
+        {data: wt.p90_wait, color: COL.p90_wait, label: 'P90 等待', dim: false},
+      ], {labels: wt.times, area: false});
+    } else {
+      $('#pdChart').innerHTML = `<text x="500" y="115" fill="#6e7f95" font-size="13" text-anchor="middle">等待趋势数据积累中…</text>`;
+    }
+
+    // Pie chart + 等待原因下拉（保留当前选择）
+    const rd = summary.reason_dist || {};
+    renderPie(rd);
+    const rsel = $('#pdReason'), prevReason = rsel.value;
+    const reasons = [...new Set([...Object.keys(rd), ...(prevReason !== 'all' ? [prevReason] : [])])];
+    rsel.innerHTML = `<option value="all">全部</option>` + reasons.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+    rsel.value = prevReason;
+
+    // Job table
+    $('#pdCnt').textContent = `${data.total ?? data.list?.length ?? 0} 个作业`;
+    $('#pdTable').innerHTML = `<table><thead><tr>
+      <th>提交时间</th><th>等待时长</th><th>用户</th><th>作业ID</th><th>分区</th>
+      <th>GPU需求</th><th>CPU/内存</th><th>目标节点</th><th>优先级</th><th>排队位次</th><th>等待原因</th>
+    </tr></thead><tbody>` +
+    (data.list?.length ? data.list.map(j => `<tr>
+      <td>${j.submit_time||'—'}</td>
+      <td class="num"><span class="tag ${(j.wait_duration||'').split(':')[0]>=1?'t-warn':'t-mute'}">${waitFmt(j.wait_duration)}</span></td>
+      <td><a onclick="jumpUser('${esc(j.user)}')">${esc(j.user)}</a></td>
+      <td>${j.job_label||j.job_id}</td>
+      <td>${esc(j.partition||'—')}</td>
+      <td class="num"><b>${j.req_gpu}</b> 卡</td>
+      <td class="num">${j.req_cpu} 核 / ${j.req_mem_gb} GB</td>
+      <td>${j.target_nodes?.length ? esc(j.target_nodes.join(',')) : '— 任意 —'}</td>
+      <td class="num">${j.priority ?? '—'}</td>
+      <td class="num">${j.queue_pos == null ? '—' : '#' + j.queue_pos}</td>
+      <td>${j.reason ? `<span class="tag ${reasonTag(j.reason)}">${esc(j.reason)}</span>` : '—'}</td>
+    </tr>`).join('') : `<tr><td colspan="11" class="empty">当前无匹配的排队作业</td></tr>`) +
+    `</tbody></table>`;
+  } catch(e) {
+    console.error('pending error', e);
+  }
+}
+
+// 排队原因固定配色（标签与饼图一致）：资源不足=红，优先级=黄，依赖=蓝，其余=灰
+const REASON_COLOR = {Resources:'#f85149', Priority:'#d29922', Dependency:'#3b82f6', NodeDown:'#ec4899'};
+const reasonColor = r => REASON_COLOR[r] || '#6e7f95';
+const reasonTag = r => r === 'Resources' ? 't-crit' : r === 'Priority' ? 't-warn' : r === 'Dependency' ? 't-idle' : 't-mute';
+
+function renderPie(rd) {
+  const entries = Object.entries(rd);
+  const total = entries.reduce((s,[,v]) => s+v, 0);
+  const cx = 100, cy = 100, R = 82;
+
+  if (!total) {
+    $('#pdPie').innerHTML = `<text x="100" y="105" fill="#6e7f95" font-size="12" text-anchor="middle">无数据</text>`;
+    $('#pdPieLeg').innerHTML = '';
+    return;
+  }
+
+  let a = -Math.PI/2, g = '';
+  entries.forEach(([k,v], i) => {
+    const sw = v/total*Math.PI*2;
+    const e = a+sw;
+    const x1 = cx+R*Math.cos(a), y1 = cy+R*Math.sin(a);
+    const x2 = cx+R*Math.cos(e), y2 = cy+R*Math.sin(e);
+    const large = sw > Math.PI ? 1 : 0;
+    const c = reasonColor(k);
+    g += `<path d="M${cx},${cy} L${x1},${y1} A${R},${R} 0 ${large} 1 ${x2},${y2} Z" fill="${c}" opacity=".85" stroke="#0d1117" stroke-width="1.5"/>`;
+    a = e;
+  });
+  g += `<circle cx="${cx}" cy="${cy}" r="50" fill="#161b22"/>`;
+  g += `<text x="${cx}" y="${cy+2}" fill="#e6edf3" font-size="20" font-weight="700" text-anchor="middle">${total}</text>`;
+  g += `<text x="${cx}" y="${cy+16}" fill="#6e7f95" font-size="10" text-anchor="middle">排队中</text>`;
+  $('#pdPie').innerHTML = g;
+
+  $('#pdPieLeg').innerHTML = entries.map(([k,v],i) =>
+    `<span class="lopt" style="font-size:11px">
+      <i style="background:${reasonColor(k)}"></i>${esc(k)} <b style="color:var(--txt-2)">${v}</b>
+      <span style="color:var(--txt-3)">${(v/total*100).toFixed(0)}%</span>
+    </span>`
+  ).join('');
+}
+
+/* ==================== 4. 个人统计页 ==================== */
+let usTab = 'his', usPage = 1;
+let openJobs = {};
+
+async function loadUserPage() {
+  const user = $('#usSel').value || $('#usInput').value.trim();
+  if (!user) {
+    $('#usKpis').innerHTML = `<div class="kpi" style="grid-column:1/-1">
+      <div class="t">请选择或输入用户</div>
+      <div class="v" style="font-size:16px;color:var(--txt-3)">从下拉框选择，或输入用户名后按回车</div>
+    </div>`;
+    $('#usTable').innerHTML = emptyBox('暂无数据');
+    return;
+  }
+  const range = $('#usRange').value;
+
+  try {
+    const [stats, jobs] = await Promise.all([
+      API.userSummary(user, range),
+      API.userJobs(user, usTab === 'his' ? 'finished' : usTab === 'run' ? 'running' : 'pending',
+                   {page: usPage, range, status: usTab === 'his' ? $('#usState').value : 'all'}),
+    ]);
+    loadUserTrend(user);
+
+    // KPIs
+    const kpis = [
+      {t:'GPU 总耗时', v:(stats.gpu_hours||0).toFixed(1), u:'卡时', p:Math.min(100,(stats.gpu_hours||0)/500*100), foot:'统计区间内累计', color:'var(--acc)'},
+      {t:'作业总数', v:stats.job_total||0, u:'个', p:Math.min(100,(stats.job_total||0)/50*100), foot:'含所有状态', color:'var(--acc)'},
+      {t:'成功率', v:stats.success_rate||0, u:'%', p:stats.success_rate||0, foot:`完成 ${stats.job_success||0} / 失败 ${stats.job_failed||0}`, color:(stats.success_rate||0)>=80?'var(--ok)':'var(--warn)'},
+      {t:'平均等待', v:stats.avg_wait_min||0, u:' 分钟', p:Math.min(100,(stats.avg_wait_min||0)/30*100), foot:'提交到开始调度', color:(stats.avg_wait_min||0)>15?'var(--warn)':'var(--ok)'},
+      {t:'当前运行 / 排队', v:stats.running||0, u:` / ${stats.pending||0}`, p:0, foot:'实时作业', color:'var(--ok)'},
+      {t:'GPU 平均利用率', v:stats.avg_gpu_util ?? '—', u:stats.avg_gpu_util != null ? '%' : '', p:stats.avg_gpu_util||0, foot:stats.avg_gpu_util != null ? '按 GPU 时加权；低于 40% 视为低效' : '该区间内作业暂无 GPU 实测数据', color:(stats.avg_gpu_util ?? 100) < 40 ? 'var(--warn)' : 'var(--acc)'},
+    ];
+    $('#usKpis').innerHTML = kpis.map(k => `
+      <div class="kpi">
+        <div class="t">${k.t}</div>
+        <div class="v">${k.v}<small> ${k.u}</small></div>
+        <div class="bar"><i style="width:${Math.min(100,k.p||0).toFixed(0)}%;background:${k.color}"></i></div>
+        <div class="foot">${k.foot}</div>
+      </div>`).join('');
+
+    // Jobs table
+    const list = jobs.list || [];
+    const utilTag = v => v == null ? '—' : `<span class="tag ${v >= 90 ? 't-crit' : v >= 70 ? 't-warn' : 't-ok'}">${v}%</span>`;
+    const expandRow = (key, ncols) => openJobs[key] ? `<tr class="detail-row"><td colspan="${ncols}">
+          <div class="detail-box" id="analysis-${key}"><span style="color:var(--txt-3)">加载中…</span></div>
+        </td></tr>` : '';
+    let head, rows;
+
+    if (usTab === 'his') {
+      head = ['','作业ID','作业名','分区','节点','GPU','开始时间','结束时间','耗时','等待','状态','GPU利用率'];
+      rows = list.map(j => {
+        const key = String(j.job_id);
+        return `<tr onclick="toggleJob('${key}')">
+          <td class="expand">${openJobs[key]?'▾':'▸'}</td>
+          <td><b>${j.job_label||j.job_id}</b></td>
+          <td>${esc(j.job_name||'—')}</td>
+          <td>${esc(j.partition||'—')}</td>
+          <td>${esc(j.node||'—')}</td>
+          <td class="num">${j.gpu_num} 卡</td>
+          <td>${j.start_time||'—'}</td>
+          <td>${j.end_time||'—'}</td>
+          <td class="num">${j.duration||'—'}</td>
+          <td class="num">${waitFmt(j.wait_duration)}</td>
+          <td><span class="tag ${j.exit_status==='COMPLETED'?'t-ok':j.exit_status==='FAILED'?'t-crit':j.exit_status==='TIMEOUT'?'t-warn':'t-mute'}">${j.exit_status||'—'}</span></td>
+          <td class="num">${utilTag(j.gpu_util_avg)}</td>
+        </tr>` + expandRow(key, head.length);
+      });
+    } else if (usTab === 'run') {
+      head = ['','作业ID','作业名','分区','节点','GPU','CPU/内存','开始时间','运行时长','状态','GPU利用率'];
+      rows = list.map(j => {
+        const key = String(j.job_id);
+        return `<tr onclick="toggleJob('${key}')">
+          <td class="expand">${openJobs[key]?'▾':'▸'}</td>
+          <td><b>${j.job_label||j.job_id}</b></td>
+          <td>${esc(j.job_name||'—')}</td>
+          <td>${esc(j.partition||'—')}</td>
+          <td>${esc(j.node||'—')}</td>
+          <td class="num">${j.gpu_num} 卡</td>
+          <td class="num">${j.cpu_num} 核 / ${j.mem_gb} GB</td>
+          <td>${j.start_time||'—'}</td>
+          <td class="num">${j.duration||'—'}</td>
+          <td><span class="tag t-ok">RUNNING</span></td>
+          <td class="num">${utilTag(j.gpu_util_avg)}</td>
+        </tr>` + expandRow(key, head.length);
+      });
+    } else {
+      head = ['作业ID','作业名','分区','目标节点','GPU需求','CPU/内存','提交时间','已等待','等待原因','排队位次'];
+      rows = list.map(j => `<tr>
+        <td><b>${j.job_label||j.job_id}</b></td>
+        <td>${esc(j.job_name||'—')}</td>
+        <td>${esc(j.partition||'—')}</td>
+        <td>${esc(j.node||'—')}</td>
+        <td class="num">${j.gpu_num} 卡</td>
+        <td class="num">${j.req_cpu} 核 / ${j.req_mem_gb} GB</td>
+        <td>${j.start_time||'—'}</td>
+        <td class="num"><span class="tag t-warn">${waitFmt(j.wait_duration)}</span></td>
+        <td>${j.reason ? `<span class="tag ${reasonTag(j.reason)}">${esc(j.reason)}</span>` : '—'}</td>
+        <td class="num">${j.queue_pos == null ? '—' : '#' + j.queue_pos}</td>
+      </tr>`);
+    }
+
+    $('#usTable').innerHTML = `<table>
+      <thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.join('') || `<tr><td colspan="${head.length}" class="empty">${usTab === 'his' ? '所选范围内没有历史作业' : usTab === 'run' ? '当前没有运行中的作业' : '当前没有排队中的作业'}</td></tr>`}</tbody>
+    </table>`;
+
+    // 分页
+    const total = jobs.total ?? list.length, pages = Math.max(1, Math.ceil(total / (jobs.page_size || 20)));
+    $('#usPager').innerHTML = total > (jobs.page_size || 20)
+      ? `<span>共 ${total} 个 · 第 ${usPage} / ${pages} 页</span>
+         <button class="pg" ${usPage <= 1 ? 'disabled' : ''} onclick="usGoPage(${usPage - 1})">上一页</button>
+         <button class="pg" ${usPage >= pages ? 'disabled' : ''} onclick="usGoPage(${usPage + 1})">下一页</button>`
+      : `<span>共 ${total} 个</span>`;
+
+    // Load analysis for open jobs
+    Object.keys(openJobs).forEach(k => {
+      if (openJobs[k]) loadJobAnalysis(k);
+    });
+
+  } catch(e) {
+    console.error('user page error', e);
+  }
+}
+
+function usGoPage(p) { usPage = Math.max(1, p); loadUserPage(); }
+
+async function loadUserTrend(user) {
+  const metric = $('#usMetric').value;
+  const msg = t => { $('#usChart').innerHTML = `<text x="500" y="110" fill="#6e7f95" font-size="13" text-anchor="middle">${t}</text>`; $('#usLegend').innerHTML = ''; };
+  try {
+    const t = await API.userTrend(user, $('#usRange').value, $('#usGran').value);
+    const data = t[metric] || [];
+    if (!data.some(v => v != null && v !== 0)) return msg('所选范围内没有该指标的数据');
+    const unit = {gpuh: ' 卡时', cnt: ' 个', util: ' %'}[metric];
+    lineChart($('#usChart'), [{data, color: '#3b82f6'}], {labels: t.times, area: true, max: metric === 'util' ? 100 : undefined});
+    const vals = data.filter(v => v != null);
+    const total = vals.reduce((a, b) => a + b, 0);
+    $('#usLegend').innerHTML = `<span class="lopt"><i style="background:#3b82f6"></i>${esc($('#usMetric').selectedOptions[0].text)}
+      <span style="color:var(--txt-3)">${metric === 'util' ? '均值 ' + (total / vals.length).toFixed(1) : '合计 ' + total.toFixed(metric === 'cnt' ? 0 : 1)}${unit}</span></span>
+      <span style="color:var(--txt-3);margin-left:auto">粒度 ${t.granularity === '1h' ? '1 小时' : '1 天'}${$('#usRange').value === 'all' ? ' · 最近 90 天' : ''}</span>`;
+  } catch (e) { console.error('user trend error', e); msg('趋势数据加载失败'); }
+}
+
+function usExport() {
+  const fmt = $('#usExport').value; $('#usExport').value = '';
+  const user = $('#usSel').value || $('#usInput').value.trim();
+  if (!fmt || !user) return;
+  const q = new URLSearchParams({format: fmt, state: usTab === 'his' ? 'finished' : usTab === 'run' ? 'running' : 'pending'});
+  if ($('#usRange').value !== 'all') q.set('range', $('#usRange').value);
+  if (usTab === 'his' && $('#usState').value !== 'all') q.set('status', $('#usState').value);
+  window.location.href = `/api/user/${encodeURIComponent(user)}/export?${q}`;
+}
+
+async function loadJobAnalysis(jobId) {
+  const el = document.getElementById(`analysis-${jobId}`);
+  if (!el) return;
+
+  try {
+    const a = await API.jobAnalysis(jobId);
+
+    // ---- 效率行颜色 ----
+    function effColor(pct, warnAt, critAt) {
+      if (pct == null) return 'var(--txt-2)';
+      return pct >= critAt ? 'var(--crit)' : pct >= warnAt ? 'var(--warn)' : 'var(--ok)';
+    }
+    function effTag(pct, warnAt, critAt) {
+      if (pct == null) return '<span style="color:var(--txt-3)">n/a</span>';
+      const c = effColor(pct, warnAt, critAt);
+      return `<b style="color:${c}">${pct.toFixed(1)}%</b>`;
+    }
+
+    // 时间效率（越低越差）
+    const timeEff = a.time_eff_pct;
+    const timeEffColor = timeEff == null ? 'var(--txt-3)'
+      : timeEff < 10 ? 'var(--crit)' : timeEff < 25 ? 'var(--warn)' : 'var(--ok)';
+
+    // 状态徽章
+    const stateClass = a.state === 'COMPLETED' ? 't-ok'
+      : a.state === 'FAILED' ? 't-crit'
+      : a.state === 'TIMEOUT' ? 't-warn' : 't-mute';
+
+    // 构建表格行
+    function row(label, val, hint) {
+      return `<tr>
+        <td style="color:var(--txt-3);white-space:nowrap;padding:5px 12px 5px 0;font-size:12px">${label}</td>
+        <td style="font-variant-numeric:tabular-nums;padding:5px 16px 5px 0;font-size:13px">${val}</td>
+        ${hint ? `<td style="font-size:11px;color:var(--txt-3)">${hint}</td>` : '<td></td>'}
+      </tr>`;
+    }
+
+    const rows = [
+      row('分区',    esc(a.partition || '—'), ''),
+      row('节点数',  a.nodes ?? '—', ''),
+      row('CPU 核', a.cores ?? '—', ''),
+      row('GPU 数',  a.gpus ?? 0, ''),
+      row('实际用时', esc(a.elapsed || '—'), ''),
+      row('申请时长', esc(a.timelimit || '—'), ''),
+      row('时间效率',
+        timeEff != null
+          ? `<b style="color:${timeEffColor}">${timeEff.toFixed(1)}%</b>`
+          : '<span style="color:var(--txt-3)">n/a</span>',
+        '实际用时 / 申请时长'),
+      row('CPU 用量', '<span style="color:var(--txt-3)">n/a</span>', 'sacct 未采集'),
+      row('CPU 效率', '<span style="color:var(--txt-3)">n/a</span>',
+        a.core_walltime ? `of ${esc(a.core_walltime)} core-walltime` : ''),
+      row('内存峰值', '<span style="color:var(--txt-3)">n/a</span>', 'MaxRSS 未采集'),
+      row('申请内存',
+        a.mem_req_gb != null ? `${a.mem_req_gb} GB` : '<span style="color:var(--txt-3)">n/a</span>', ''),
+      row('AllocTRES', `<span style="font-size:11px;font-family:monospace;color:var(--txt-2)">${esc(a.alloc_tres || '—')}</span>`, ''),
+    ].join('');
+
+    // 诊断提示
+    const tipsHtml = (a.tips && a.tips.length)
+      ? a.tips.map(t => `<div style="display:flex;gap:6px;align-items:flex-start;margin-top:6px;font-size:12px">
+          <span style="color:var(--warn);flex-shrink:0">💡</span>
+          <span style="color:var(--txt-2)">${esc(t)}</span>
+        </div>`).join('')
+      : (a.state === 'COMPLETED'
+          ? `<div style="font-size:12px;color:var(--ok)">✓ 作业正常完成</div>`
+          : '');
+
+    // GPU 说明
+    const gpuNoteHtml = a.gpu_note
+      ? `<div style="margin-top:10px;padding:8px 10px;background:var(--panel-2);border:1px dashed var(--line);border-radius:6px;font-size:11px;color:var(--txt-3)">
+          ℹ️ ${esc(a.gpu_note).replace(/\n/g,'<br>').replace(/ {2}/g,'&nbsp;&nbsp;')}
+        </div>`
+      : '';
+
+    // GPU 运行分析（gpu_snapshots 按作业号汇总）：利用率曲线 + 指标
+    let gpuHtml = '';
+    if (a.gpu) {
+      const g = a.gpu, tr = g.trend || {util: [], times: []};
+      const n = tr.util.length, W = 460, H = 130, pl = 34, iw = W - pl - 10;
+      const X = i => pl + (n <= 1 ? 0 : i * iw / (n - 1)), Y = v => 108 - v * 1;
+      const pts = tr.util.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+      const grid = [0, 1, 2, 3].map(k => { const y = 8 + 100 * k / 3;
+        return `<line x1="${pl}" y1="${y}" x2="${W - 10}" y2="${y}" stroke="#2a3444"/><text x="${pl - 6}" y="${y + 4}" fill="#6e7f95" font-size="10" text-anchor="end">${Math.round(100 - 100 * k / 3)}</text>`; }).join('');
+      const tile = (label, val, color) => `<div><div style="font-size:11px;color:var(--txt-3)">${label}</div>
+        <div style="font-size:20px;font-weight:700;color:${color || 'var(--txt)'}">${val}</div></div>`;
+      const scoreColor = g.score < 50 ? 'var(--crit)' : g.score < 75 ? 'var(--warn)' : 'var(--ok)';
+      const diagCls = g.diagnosis === '存在明显空转' ? 't-crit' : g.diagnosis === '利用率偏低' ? 't-warn' : 't-ok';
+      gpuHtml = `<div style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--txt-3);margin-bottom:6px">GPU 利用率曲线（作业运行期间 · ${g.samples} 个采样点）</div>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;max-width:520px;height:${H}px">
+          ${grid}${n > 1 ? `<polyline points="${pts}" fill="none" stroke="${barColor(g.avg)}" stroke-width="1.8"/>` : `<circle cx="${X(0)}" cy="${Y(tr.util[0])}" r="3" fill="${barColor(g.avg)}"/>`}
+          <text x="${pl}" y="${H - 2}" fill="#6e7f95" font-size="10">${esc(tr.times[0] || '')}</text>
+          <text x="${W - 10}" y="${H - 2}" fill="#6e7f95" font-size="10" text-anchor="end">${esc(tr.times[n - 1] || '')}</text>
+        </svg></div>
+        <div style="display:flex;gap:22px;flex-wrap:wrap">
+          ${tile('平均 GPU 利用率', g.avg + '%', barColor(g.avg))}
+          ${tile('P90 利用率', g.p90 + '%')}
+          ${tile('峰值显存（单卡）', g.mem_peak_gb != null ? g.mem_peak_gb + ' GB' : '—')}
+          ${tile('空转占比 (<10%)', g.idle_ratio + '%', g.idle_ratio > 30 ? 'var(--crit)' : 'var(--ok)')}
+          ${tile('GPU 效率评分', g.score + '<span style="font-size:12px;color:var(--txt-3)">/100</span>', scoreColor)}
+          <div><div style="font-size:11px;color:var(--txt-3)">诊断</div><div style="margin-top:6px"><span class="tag ${diagCls}">${esc(g.diagnosis)}</span></div></div>
+        </div>`;
+    }
+
+    el.innerHTML = `
+      <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:0 0 auto">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="font-size:12px;font-weight:600;color:var(--txt-2)">作业 ${a.job_id}${a.job_name ? ' · ' + esc(a.job_name) : ''}</span>
+            <span class="tag ${stateClass}">${esc(a.state)}</span>
+            ${a.exit_code ? `<span style="font-size:11px;color:var(--txt-3)">exit ${esc(a.exit_code)}</span>` : ''}
+          </div>
+          <table style="border-collapse:collapse">${rows}</table>
+        </div>
+        <div style="flex:1;min-width:260px">
+          ${gpuHtml}
+          ${tipsHtml}
+          ${gpuNoteHtml}
+        </div>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<span style="color:var(--txt-3);font-size:12px">分析加载失败: ${esc(String(e))}</span>`;
+  }
+}
+
+function toggleJob(key) {
+  openJobs[key] = !openJobs[key];
+  loadUserPage();
+}
+
+function jumpUser(u) {
+  $('#usSel').value = u;
+  $('#usInput').value = u;
+  switchPage('user');
+  loadUserPage();
+}
+
+/* ==================== 5. 名字映射页 ==================== */
+let mpAllUsers = [];   // 所有 Slurm 用户（来自 meta/users）
+let mpMappings = {};   // { username -> mapping row } 来自 /api/user-mapping
+let mpGroups = [];     // 项目组列表 [{ id, name }]
+let mpInlineEdit = {}; // { username -> {display_name, groups} } 当前行内编辑状态
+
+async function loadMappingPage() {
+  try {
+    const [users, mres, gres] = await Promise.all([
+      API.metaUsers(),
+      fetch('/api/user-mapping').then(r => r.json()),
+      fetch('/api/project-groups').then(r => r.json()),
+    ]);
+    mpAllUsers = users || [];
+    mpMappings = {};
+    (mres.data || []).forEach(m => { mpMappings[m.username] = m; });
+    mpGroups = gres.data || [];
+    renderMappingTables();
+  } catch(e) {
+    console.error('mapping load error', e);
+  }
+}
+
+function _groupNames(groupIds) {
+  if (!groupIds) return '—';
+  const ids = String(groupIds).split(',').map(x => x.trim()).filter(Boolean);
+  if (!ids.length) return '—';
+  return ids.map(id => {
+    const g = mpGroups.find(x => String(x.id) === id);
+    return g ? g.name : id;
+  }).join(', ');
+}
+
+function _groupOptions(selected) {
+  const sel = String(selected || '').split(',').map(x => x.trim()).filter(Boolean);
+  return mpGroups.map(g =>
+    `<option value="${g.id}" ${sel.includes(String(g.id)) ? 'selected' : ''}>${esc(g.name)}</option>`
+  ).join('');
+}
+
+function renderMappingTables() {
+  const q = ($('#mpSearch').value || '').toLowerCase().trim();
+  const unmapped = mpAllUsers.filter(u => !mpMappings[u] || !mpMappings[u].display_name);
+  const mapped   = mpAllUsers.filter(u =>  mpMappings[u] &&  mpMappings[u].display_name);
+  const filterFn = u => !q || u.toLowerCase().includes(q) || (mpMappings[u]?.display_name || '').toLowerCase().includes(q);
+
+  const uList = unmapped.filter(filterFn);
+  const mList = mapped.filter(filterFn);
+
+  $('#mpUnmappedCount').textContent = `${uList.length} 人`;
+  $('#mpMappedCount').textContent   = `${mList.length} 人`;
+
+  const groupHeader = '<th>项目组</th>';
+  const thead = `<thead><tr><th>Slurm 账号</th><th>显示名称</th>${groupHeader}<th style="text-align:center;width:80px">操作</th></tr></thead>`;
+
+  // --- 待映射 ---
+  if (!uList.length) {
+    $('#mpUnmappedTable').innerHTML = emptyBox(q ? '无匹配' : '所有用户均已映射');
+  } else {
+    $('#mpUnmappedTable').innerHTML = `<table>${thead}<tbody>` +
+      uList.map(u => {
+        if (mpInlineEdit[u] === 'edit') return _editRow(u, false);
+        return `<tr>
+          <td><code style="font-size:12px">${esc(u)}</code></td>
+          <td style="color:var(--txt-3)">—</td>
+          <td style="color:var(--txt-3)">—</td>
+          <td style="text-align:center"><a style="font-size:12px;cursor:pointer" onclick="mpStartInline('${esc(u)}')">设置</a></td>
+        </tr>`;
+      }).join('') + `</tbody></table>`;
+  }
+
+  // --- 已映射 ---
+  if (!mList.length) {
+    $('#mpMappedTable').innerHTML = emptyBox(q ? '无匹配' : '暂无已映射用户');
+  } else {
+    $('#mpMappedTable').innerHTML = `<table>${thead}<tbody>` +
+      mList.map(u => {
+        const m = mpMappings[u] || {};
+        if (mpInlineEdit[u] === 'edit') return _editRow(u, true);
+        return `<tr>
+          <td><code style="font-size:12px">${esc(u)}</code></td>
+          <td><b>${esc(m.display_name || '—')}</b></td>
+          <td style="font-size:12px;color:var(--txt-2)">${_groupNames(m.groups)}</td>
+          <td style="text-align:center;white-space:nowrap">
+            <a style="font-size:12px;cursor:pointer" onclick="mpStartInline('${esc(u)}')">编辑</a>
+          </td>
+        </tr>`;
+      }).join('') + `</tbody></table>`;
+  }
+}
+
+function _editRow(username, hasMapped) {
+  const m = mpMappings[username] || {};
+  const noGroupsMsg = mpGroups.length === 0
+    ? `<td><span style="color:var(--txt-3);font-size:12px">暂无项目组</span></td>`
+    : `<td><select id="mpGrpSel_${esc(username)}" multiple
+         style="background:var(--panel-2);color:var(--txt);border:1px solid var(--line);border-radius:5px;font-size:12px;min-width:130px;max-height:80px">
+         ${_groupOptions(m.groups)}
+       </select></td>`;
+  return `<tr style="background:rgba(59,130,246,.07)">
+    <td><code style="font-size:12px">${esc(username)}</code></td>
+    <td>
+      <input type="text" id="mpDnInput_${esc(username)}" value="${esc(m.display_name || '')}"
+        placeholder="显示名（唯一）" style="width:150px;background:var(--panel-2);color:var(--txt);border:1px solid var(--acc);border-radius:5px;padding:3px 7px;font-size:13px;font-family:inherit">
+      <span id="mpRowMsg_${esc(username)}" style="font-size:11px;margin-left:6px"></span>
+    </td>
+    ${noGroupsMsg}
+    <td style="text-align:center;white-space:nowrap">
+      <a style="font-size:12px;cursor:pointer;color:var(--ok)" onclick="mpSaveInline('${esc(username)}')">保存</a>
+      <span style="color:var(--line);margin:0 4px">|</span>
+      <a style="font-size:12px;cursor:pointer;color:var(--txt-3)" onclick="mpCancelInline('${esc(username)}')">取消</a>
+    </td>
+  </tr>`;
+}
+
+function mpStartInline(username) {
+  mpInlineEdit[username] = 'edit';
+  renderMappingTables();
+  setTimeout(() => document.getElementById(`mpDnInput_${username}`)?.focus(), 50);
+}
+
+function mpCancelInline(username) {
+  delete mpInlineEdit[username];
+  renderMappingTables();
+}
+
+async function mpSaveInline(username) {
+  const dnEl = document.getElementById(`mpDnInput_${username}`);
+  const msgEl = document.getElementById(`mpRowMsg_${username}`);
+  const grpEl = document.getElementById(`mpGrpSel_${username}`);
+
+  const displayName = (dnEl?.value || '').trim();
+  const groups = grpEl ? Array.from(grpEl.selectedOptions).map(o => o.value).join(',') : '';
+
+  if (!displayName) {
+    if (msgEl) { msgEl.style.color = 'var(--crit)'; msgEl.textContent = '不能为空'; }
+    return;
+  }
+  if (msgEl) { msgEl.style.color = 'var(--txt-3)'; msgEl.textContent = '保存中…'; }
+
+  const existing = mpMappings[username];
+  let res;
+  if (existing) {
+    res = await fetch(`/api/user-mapping/${encodeURIComponent(username)}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ display_name: displayName, groups: groups || null, version: existing.version }),
+    }).then(r => r.json());
+  } else {
+    res = await fetch('/api/user-mapping', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username, display_name: displayName, groups: groups || null }),
+    }).then(r => r.json());
+  }
+
+  if (res.code === 0) {
+    delete mpInlineEdit[username];
+    mpMappings[username] = res.data;
+    renderMappingTables();
+    refreshUserDropdowns(); // 同步更新排队/个人统计页的下拉框
+  } else {
+    if (msgEl) { msgEl.style.color = 'var(--crit)'; msgEl.textContent = res.message || '失败'; }
+  }
+}
+
+/* ==================== 6. 项目组配置页 ==================== */
+let grpToken = null;
+let grpEditId = null;
+let grpGroups = [];
+
+async function loadGroupsPage() {
+  const valid = grpToken && (await fetch('/api/admin/check', {headers:{'X-Admin-Token': grpToken}}).then(r=>r.json()).then(j=>j.code===0).catch(()=>false));
+  $('#grpLogin').style.display  = valid ? 'none' : 'block';
+  $('#grpMain').style.display   = valid ? 'block' : 'none';
+  if (valid) await refreshGroupList();
+}
+
+async function refreshGroupList() {
+  const res = await fetch('/api/project-groups').then(r=>r.json());
+  grpGroups = res.data || [];
+  $('#grpCount').textContent = `${grpGroups.length} 个`;
+  if (!grpGroups.length) {
+    $('#grpTable').innerHTML = emptyBox('暂无项目组，点击「新增项目组」开始');
+    return;
+  }
+  $('#grpTable').innerHTML = `<table><thead><tr><th style="width:60px">ID</th><th>项目组名称</th><th style="text-align:center;width:80px">操作</th></tr></thead><tbody>` +
+    grpGroups.map(g => `<tr>
+      <td style="color:var(--txt-3);font-variant-numeric:tabular-nums">#${g.id}</td>
+      <td><b>${esc(g.name)}</b></td>
+      <td style="text-align:center"><a style="font-size:12px;cursor:pointer" onclick="grpStartEdit(${g.id},'${esc(g.name)}')">编辑</a></td>
+    </tr>`).join('') + `</tbody></table>`;
+}
+
+function grpStartEdit(id, name) {
+  grpEditId = id;
+  $('#grpFormTitle').textContent = `编辑项目组 #${id}`;
+  $('#grpFormId').value = id;
+  $('#grpFormName').value = name;
+  $('#grpFormMsg').textContent = '';
+  $('#grpForm').style.display = 'block';
+  $('#grpFormName').focus();
+}
+
+function grpStartCreate() {
+  grpEditId = null;
+  $('#grpFormTitle').textContent = '新增项目组';
+  $('#grpFormId').value = '（自动分配）';
+  $('#grpFormName').value = '';
+  $('#grpFormMsg').textContent = '';
+  $('#grpForm').style.display = 'block';
+  $('#grpFormName').focus();
+}
+
+function grpHideForm() {
+  $('#grpForm').style.display = 'none';
+  grpEditId = null;
+}
+
+async function grpSave() {
+  const name = $('#grpFormName').value.trim();
+  const msg = $('#grpFormMsg');
+  if (!name) { msg.style.color = 'var(--crit)'; msg.textContent = '名称不能为空'; return; }
+  msg.style.color = 'var(--txt-3)'; msg.textContent = '保存中…';
+
+  const url = grpEditId ? `/api/admin/project-groups/${grpEditId}` : '/api/admin/project-groups';
+  const method = grpEditId ? 'PUT' : 'POST';
+  const res = await fetch(url, {
+    method,
+    headers: {'Content-Type':'application/json','X-Admin-Token': grpToken || ''},
+    body: JSON.stringify({name}),
+  }).then(r=>r.json());
+
+  if (res.code === 0) {
+    msg.style.color = 'var(--ok)'; msg.textContent = '保存成功';
+    setTimeout(grpHideForm, 600);
+    await refreshGroupList();
+    // 刷新项目组缓存供映射页使用
+    mpGroups = grpGroups;
+  } else {
+    msg.style.color = 'var(--crit)'; msg.textContent = res.message || '失败';
+  }
+}
+
+async function grpDoLogin() {
+  const user = $('#grpLoginUser').value.trim();
+  const pass = $('#grpLoginPass').value;
+  const msg = $('#grpLoginMsg');
+  if (!user || !pass) { msg.textContent = '请输入用户名和密码'; return; }
+  msg.textContent = '登录中…';
+
+  const res = await fetch('/api/admin/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({username: user, password: pass}),
+  }).then(r=>r.json());
+
+  if (res.code === 0) {
+    grpToken = res.data.token;
+    msg.textContent = '';
+    await loadGroupsPage();
+  } else {
+    msg.textContent = res.message || '登录失败';
+  }
+}
+
+function grpLogout() {
+  grpToken = null;
+  $('#grpLogin').style.display = 'block';
+  $('#grpMain').style.display = 'none';
+  $('#grpLoginUser').value = '';
+  $('#grpLoginPass').value = '';
+}
+
+/* ==================== 集群配置：节点映射 ==================== */
+let cnNodes = [], cnDefaults = {ssh_user: 'djs', has_password: false}, cnEditId = null;
+
+async function cnApi(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: {'Content-Type':'application/json','X-Admin-Token': grpToken || ''},
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(r => r.json());
+  if (res.code === 40101) { grpLogout(); }
+  return res;
+}
+
+async function cnRefresh() {
+  const res = await cnApi('GET', '/api/admin/nodes');
+  if (res.code !== 0) return;
+  cnNodes = res.data.nodes;
+  cnDefaults = res.data.defaults;
+  $('#cnNameList').innerHTML = res.data.unmapped_slurm_nodes.map(n => `<option value="${esc(n)}">`).join('');
+  $('#cnCount').textContent = `${cnNodes.length} 个` + (res.data.unmapped_slurm_nodes.length ? ` · ${res.data.unmapped_slurm_nodes.length} 个 Slurm 节点未配置 IP` : '');
+  $('#cnTable').innerHTML = cnNodes.length
+    ? `<table><thead><tr><th>节点名</th><th>IP</th><th>端口</th><th>SSH 用户</th><th>密码</th><th>采集</th><th>备注</th><th>更新时间</th><th style="text-align:center">操作</th></tr></thead><tbody>` +
+      cnNodes.map(n => `<tr>
+        <td><b>${esc(n.node_name)}</b></td><td>${esc(n.ip)}</td><td class="num">${n.port}</td><td>${esc(n.ssh_user)}</td>
+        <td>${n.has_password ? '<span class="tag t-ok">已设置</span>' : `<span class="tag t-mute">${cnDefaults.has_password ? '默认' : '未设置'}</span>`}</td>
+        <td>${n.enabled ? '<span class="tag t-ok">启用</span>' : '<span class="tag t-mute">停用</span>'}</td>
+        <td>${esc(n.remark || '')}</td><td>${esc(n.updated_at || '')}</td>
+        <td style="text-align:center;white-space:nowrap">
+          <a style="font-size:12px" onclick="cnStartEdit(${n.id})">编辑</a>
+          <a style="font-size:12px;margin-left:10px;color:var(--crit)" onclick="cnDelete(${n.id})">删除</a></td>
+      </tr>`).join('') + `</tbody></table>`
+    : emptyBox('暂无节点，点击「新增节点」添加算力节点的 IP');
+}
+
+function cnShowForm(title) {
+  $('#cnFormTitle').textContent = title;
+  $('#cnUser').placeholder = `默认 ${cnDefaults.ssh_user}`;
+  $('#cnMsg').textContent = '';
+  $('#cnForm').style.display = 'block';
+}
+
+function cnStartCreate() {
+  cnEditId = null;
+  $('#cnName').disabled = false; $('#cnName').value = '';
+  $('#cnIp').value = ''; $('#cnPort').value = '22'; $('#cnUser').value = ''; $('#cnPass').value = '';
+  $('#cnRemark').value = ''; $('#cnEnabled').checked = true;
+  $('#cnPass').placeholder = cnDefaults.has_password ? '留空使用默认密码' : '';
+  cnShowForm('新增节点');
+  $('#cnName').focus();
+}
+
+function cnStartEdit(id) {
+  const n = cnNodes.find(x => x.id === id); if (!n) return;
+  cnEditId = id;
+  $('#cnName').disabled = true; $('#cnName').value = n.node_name;
+  $('#cnIp').value = n.ip; $('#cnPort').value = n.port; $('#cnUser').value = n.ssh_user; $('#cnPass').value = '';
+  $('#cnRemark').value = n.remark || ''; $('#cnEnabled').checked = n.enabled;
+  $('#cnPass').placeholder = n.has_password ? '留空保持不变' : '留空使用默认密码';
+  cnShowForm(`编辑节点 ${n.node_name}`);
+  $('#cnIp').focus();
+}
+
+function cnHideForm() { $('#cnForm').style.display = 'none'; cnEditId = null; }
+
+function cnMsg(text, color) { const m = $('#cnMsg'); m.style.color = color; m.textContent = text; }
+
+function cnFormBody() {
+  return {
+    ip: $('#cnIp').value.trim(),
+    port: parseInt($('#cnPort').value, 10) || 22,
+    ssh_user: $('#cnUser').value.trim() || null,
+    remark: $('#cnRemark').value.trim() || null,
+    enabled: $('#cnEnabled').checked,
+  };
+}
+
+async function cnSave() {
+  const body = cnFormBody();
+  const pass = $('#cnPass').value;
+  if (!body.ip) { cnMsg('IP 不能为空', 'var(--crit)'); return; }
+  cnMsg('保存中…', 'var(--txt-3)');
+  let res;
+  if (cnEditId) {
+    if (pass) body.ssh_password = pass;   // 不填则不带该字段，服务端保持原密码
+    res = await cnApi('PUT', `/api/admin/nodes/${cnEditId}`, body);
+  } else {
+    body.node_name = $('#cnName').value.trim();
+    if (!body.node_name) { cnMsg('节点名不能为空', 'var(--crit)'); return; }
+    if (pass) body.ssh_password = pass;
+    res = await cnApi('POST', '/api/admin/nodes', body);
+  }
+  if (res.code === 0) { cnMsg('保存成功，约 30 秒内开始采集', 'var(--ok)'); setTimeout(cnHideForm, 900); await cnRefresh(); }
+  else cnMsg(res.message || (res.detail ? '参数不合法，请检查 IP / 端口 / 节点名' : '失败'), 'var(--crit)');
+}
+
+async function cnTest() {
+  const body = cnFormBody();
+  if (!body.ip) { cnMsg('请先填写 IP', 'var(--crit)'); return; }
+  body.ssh_password = $('#cnPass').value || null;
+  body.node_id = cnEditId;
+  cnMsg('连接中…（最长约 30 秒）', 'var(--txt-3)');
+  const res = await cnApi('POST', '/api/admin/nodes/test', body);
+  if (res.code === 0) cnMsg(`连接成功：检测到 ${res.data.gpu_count} 张 GPU（${res.data.gpu_models.join(', ') || '型号未知'}）`, 'var(--ok)');
+  else cnMsg(res.message || '连接失败', 'var(--crit)');
+}
+
+async function cnDelete(id) {
+  const n = cnNodes.find(x => x.id === id); if (!n) return;
+  if (!confirm(`删除节点 ${n.node_name} (${n.ip})？\n已采集的历史 GPU 数据会保留，但不再继续采集。`)) return;
+  const res = await cnApi('DELETE', `/api/admin/nodes/${id}`);
+  if (res.code === 0) await cnRefresh(); else alert(res.message || '删除失败');
+}
+
+function cfgSwitchTab(tab) {
+  $$('#cfgTabs button[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  $('#cfgGroups').style.display = tab === 'groups' ? 'block' : 'none';
+  $('#cfgNodes').style.display = tab === 'nodes' ? 'block' : 'none';
+  if (tab === 'nodes') cnRefresh();
+}
+
+/* ==================== 初始化 ==================== */
+function switchPage(p) {
+  $$('.nav button').forEach(b => b.classList.toggle('on', b.dataset.page === p));
+  $$('.page').forEach(e => e.classList.remove('on'));
+  $(`#page-${p}`).classList.add('on');
+  window.scrollTo(0,0);
+}
+
+// 刷新用户下拉框（排队作业页 + 个人统计页），用映射后显示名作为文本，value 保留原始账号
+async function refreshUserDropdowns() {
+  try {
+    const [users, mappingRes] = await Promise.all([
+      API.metaUsers(),
+      fetch('/api/user-mapping').then(r => r.json()).catch(() => ({ data: [] })),
+    ]);
+    const _nameMap = {};
+    (mappingRes.data || []).forEach(m => { if (m.display_name) _nameMap[m.username] = m.display_name; });
+    (mappingRes.data || []).forEach(m => { mpMappings[m.username] = m; });
+    const _label = u => esc(_nameMap[u] || u);
+
+    const userOpts = `<option value="">-- 选择用户 --</option>` + users.map(u => `<option value="${esc(u)}">${_label(u)}</option>`).join('');
+    const usEl = $('#usSel');
+    if (usEl) { const prev = usEl.value; usEl.innerHTML = userOpts; usEl.value = prev; }
+
+    const pdUserOpts = `<option value="all">全部</option>` + users.map(u => `<option value="${esc(u)}">${_label(u)}</option>`).join('');
+    const pdEl = $('#pdUser');
+    if (pdEl) { const prev = pdEl.value; pdEl.innerHTML = pdUserOpts; pdEl.value = prev; }
+  } catch(e) { console.error('meta users error', e); }
+}
+
+async function initDropdowns() {
+  // Fill node select
+  try {
+    const nodes = await API.metaNodes();
+    const nodeOpts = nodes.map(n => `<option value="${esc(n.name)}">${esc(n.name)}</option>`).join('');
+    ndAllNodes = nodes;
+    ndFillNodes();
+
+    const nodeOptsPd = `<option value="all">全部</option>` + nodes.map(n => `<option value="${esc(n.name)}">${esc(n.name)}</option>`).join('');
+    $('#pdNode').innerHTML = nodeOptsPd;
+
+  } catch(e) { console.error('meta nodes error', e); }
+
+  // Fill user selects (shared with refreshUserDropdowns)
+  await refreshUserDropdowns();
+
+  // Fill partition selects
+  try {
+    const parts = await API.metaPartitions();
+    const partOpts = `<option value="all">全部</option>` + parts.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    $('#pdPart').innerHTML = partOpts;
+    $('#ndPart').innerHTML = partOpts;
+    $('#ovPart').innerHTML = partOpts;
+  } catch(e) { console.error('meta partitions error', e); }
+}
+
+function bindEvents() {
+  $$('.nav button').forEach(b => b.onclick = () => {
+    switchPage(b.dataset.page);
+    ({overview: loadOverview, node: loadNodePage, pending: loadPendingPage, user: loadUserPage, mapping: loadMappingPage, groups: loadGroupsPage})[b.dataset.page]?.();
+  });
+
+  ['#ovPart','#ovState','#ovSort','#ovView'].forEach(s => $(s)?.addEventListener('change', renderOverview));
+  $('#ovRange')?.addEventListener('change', () => { renderOverview(); });
+  $('#ovMetric')?.addEventListener('change', () => { renderOverview(); });
+  $('#topUserRange')?.addEventListener('change', loadTopUsers);
+  $('#topUserMetric')?.addEventListener('change', loadTopUsers);
+  $('#topUserLimit')?.addEventListener('change', loadTopUsers);
+
+  ['#ndSel','#ndRange','#ndMetric','#ndCmpA','#ndCmpB','#ndGpu'].forEach(s => $(s)?.addEventListener('change', loadNodePage));
+  $('#ndPart')?.addEventListener('change', () => { ndFillNodes(); loadNodePage(); });
+  $$('#ndTabs button').forEach(b => b.onclick = () => {
+    $$('#ndTabs button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    ndTab = b.dataset.tab;
+    loadNodePage();
+  });
+
+  ['#pdUser','#pdPart','#pdNode','#pdReason','#pdGpu','#pdSort'].forEach(s => $(s)?.addEventListener('change', loadPendingPage));
+  $('#pdRange')?.addEventListener('change', loadPendingPage);
+
+  ['#usSel','#usRange','#usState'].forEach(s => $(s)?.addEventListener('change', () => { usPage = 1; loadUserPage(); }));
+  ['#usGran','#usMetric'].forEach(s => $(s)?.addEventListener('change', () => { const u = $('#usSel').value || $('#usInput').value.trim(); if (u) loadUserTrend(u); }));
+  $('#usExport')?.addEventListener('change', usExport);
+  $('#usInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { $('#usSel').value = ''; usPage = 1; loadUserPage(); }
+  });
+
+  // 名字映射页
+  $('#mpSearch')?.addEventListener('input', renderMappingTables);
+
+  // 项目组配置页
+  $('#grpAddBtn')?.addEventListener('click', grpStartCreate);
+  $('#grpFormSave')?.addEventListener('click', grpSave);
+  $('#grpFormCancel')?.addEventListener('click', grpHideForm);
+  $('#grpLoginBtn')?.addEventListener('click', grpDoLogin);
+  $('#grpLoginPass')?.addEventListener('keydown', e => { if (e.key === 'Enter') grpDoLogin(); });
+  $('#grpLogoutBtn')?.addEventListener('click', grpLogout);
+  $$('#cfgTabs button[data-tab]').forEach(b => b.onclick = () => cfgSwitchTab(b.dataset.tab));
+  $('#cnAddBtn')?.addEventListener('click', cnStartCreate);
+  $('#cnSave')?.addEventListener('click', cnSave);
+  $('#cnTest')?.addEventListener('click', cnTest);
+  $('#cnCancel')?.addEventListener('click', cnHideForm);
+
+  $$('#usTabs button').forEach(b => b.onclick = () => {
+    $$('#usTabs button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    usTab = b.dataset.tab;
+    usPage = 1;
+    loadUserPage();
+  });
+
+  $('#gRefresh')?.addEventListener('change', startAutoRefresh);
+}
+
+let refreshTimer = null;
+function startAutoRefresh() {
+  clearInterval(refreshTimer);
+  const s = +$('#gRefresh').value;
+  if (s > 0) {
+    refreshTimer = setInterval(() => {
+      const page = $('.nav button.on')?.dataset.page;
+      ({overview: loadOverview, node: loadNodePage, pending: loadPendingPage, user: loadUserPage, mapping: loadMappingPage})[page]?.();
+    }, s * 1000);
+  }
+}
+
+function tickClock() {
+  const d = new Date();
+  $('#clock').textContent =
+    String(d.getHours()).padStart(2,'0') + ':' +
+    String(d.getMinutes()).padStart(2,'0') + ':' +
+    String(d.getSeconds()).padStart(2,'0');
+}
+
+// Boot
+(async () => {
+  await initDropdowns();
+  await ndFillDates();
+  bindEvents();
+  await loadOverview();
+  startAutoRefresh();
+  setInterval(tickClock, 1000);
+  tickClock();
+  window.addEventListener('resize', () => {
+    const page = $('.nav button.on')?.dataset.page;
+    ({overview: renderOverview})[page]?.();
+  });
+})();
+</script>
+</body>
+</html>

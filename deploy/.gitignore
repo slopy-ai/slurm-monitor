@@ -1,0 +1,8 @@
+# PostgreSQL 数据目录（本地 bind mount）
+pgdata/
+
+# Redis 数据目录（本地 bind mount）
+redisdata/
+
+# .env 软链接（指向上级 .env，不提交）
+.env

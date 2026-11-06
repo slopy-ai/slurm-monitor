@@ -1,0 +1,113 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: slurm-monitor-pg
+    env_file: ../.env
+    environment:
+      POSTGRES_DB: slurm_monitor
+      POSTGRES_USER: slurm_monitor
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    networks:
+      - slurm-monitor-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slurm_monitor -d slurm_monitor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: slurm-monitor-redis
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+    volumes:
+      - ./redisdata:/data
+    networks:
+      - slurm-monitor-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  collector:
+    # 固定镜像名：不随 compose 版本变（v1 会生成 deploy_collector，v2 是 deploy-collector），
+    # control.sh 的 docker run 直接用这个名字。
+    image: slurm-monitor-collector:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: slurm-monitor-collector
+    command: python -m slurm_monitor.collector
+    env_file: ../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - slurm-monitor-net
+    restart: unless-stopped
+
+  web:
+    # 固定镜像名：不随 compose 版本变（v1 会生成 deploy_web，v2 是 deploy-web），
+    # control.sh 的 docker run 直接用这个名字。
+    image: slurm-monitor-web:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: slurm-monitor-web
+    command: python -m slurm_monitor.web
+    env_file: ../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: "8000"
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - slurm-monitor-net
+    restart: unless-stopped
+
+  aggregator:
+    # 固定镜像名：不随 compose 版本变（v1 会生成 deploy_aggregator，v2 是 deploy-aggregator），
+    # control.sh 的 docker run 直接用这个名字。
+    image: slurm-monitor-aggregator:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: slurm-monitor-aggregator
+    entrypoint: ["/entrypoint-aggregator.sh"]
+    env_file: ../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - slurm-monitor-net
+    restart: unless-stopped
+    volumes:
+      - ~/.ssh:/root/.ssh:ro
+
+networks:
+  slurm-monitor-net:
+    name: slurm-monitor-net
